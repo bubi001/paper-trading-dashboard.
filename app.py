@@ -19,7 +19,7 @@ if "engine1_core" not in st.session_state:
         "MID150BEES.NS": {"units": 0, "avg_cost": 0.0},
         "JUNIORBEES.NS": {"units": 0, "avg_cost": 0.0},
         "MON100.NS": {"units": 0, "avg_cost": 0.0},
-        "BHARAT22.NS": {"units": 0, "avg_cost": 0.0},
+        "ICICIB22.NS": {"units": 0, "avg_cost": 0.0},
         "MODEFENCE.NS": {"units": 0, "avg_cost": 0.0},
         "PHARMABEES.NS": {"units": 0, "avg_cost": 0.0}
     }

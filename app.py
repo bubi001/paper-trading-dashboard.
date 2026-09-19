@@ -39,7 +39,7 @@ if "trade_log" not in st.session_state:
 # 2. BLUEPRINT MATRIX & GUARDRAIL CONFIGURATION
 # ==============================================================================
 SWING_MATRIX = {
-    "Silver": ["KOTAKSILVE.NS", "HDFCSILVER.NS", "ICICISILVE.NS", "SILVERBEES.NS"],
+    "Silver": ["SILVER1.NS", "HDFCSILVER.NS", "SILVERIETF.NS", "SILVERBEES.NS"],
     "Gold": ["GOLDBEES.NS", "HDFCGOLD.NS", "KOTAKGOLD.NS", "SETFGOLD.NS"],
     "Banking": ["BANKBEES.NS", "SETFNIFBK.NS", "KOTAKBKETF.NS", "HDFCBANKETF.NS"],
     "IT": ["ITBEES.NS", "ICICITECH.NS", "SETFIT.NS", "AXISTEC.NS"],

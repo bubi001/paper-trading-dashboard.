@@ -80,6 +80,7 @@ if st.sidebar.button("Reset Portfolio to Baseline (₹30L)"):
 try:
     ticker = yf.Ticker(selected_symbol)
     df = ticker.history(period="1y", interval="1d")
+    df = df.dropna(subset=['Close'])  # Clean out unclosed/empty NaN rows
 
     if not df.empty and len(df) >= 200:
         # Technical Indicator Calculations

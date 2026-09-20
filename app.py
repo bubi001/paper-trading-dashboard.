@@ -65,10 +65,10 @@ if "balance" not in st.session_state:
 # 2. SWING MATRIX: ASCENDING VOLUME (Lowest -> Largest / King)
 # ==============================================================================
 SWING_MATRIX = {
-    "Gold": ["ICICIGOLD.NS", "HDFCGOLD.NS", "TATAGOLD.NS", "GOLDBEES.NS"],
-    "Silver": ["HDFCSILVER.NS", "SILVERIETF.NS", "TATSILV.NS", "SILVERBEES.NS"],
-    "Banking": ["SETFNIFBK.NS", "PSUBNKBEES.NS", "BANKBEES.NS"],
-    "IT": ["ITIETF.NS", "ITBEES.NS"],
+    "Gold": ["GOLDBEES.NS","ICICIGOLD.NS", "HDFCGOLD.NS", "TATAGOLD.NS"],
+    "Silver": ["SILVERBEES.NS","HDFCSILVER.NS", "SILVERIETF.NS", "TATSILV.NS"],
+    "Banking": ["BANKBEES.NS","SETFNIFBK.NS", "PSUBNKBEES.NS"],
+    "IT": ["ITBEES.NS","ITIETF.NS"],
     "Auto": ["AUTOBEES.NS"],
     "Defence/PSU": ["MODEFENCE.NS", "CPSEETF.NS"]
 }

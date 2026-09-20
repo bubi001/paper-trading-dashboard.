@@ -11,7 +11,7 @@ from datetime import datetime
 st.set_page_config(page_title="Master Strategy Blueprint v3.0", layout="wide", page_icon="🛡️")
 st.title("🛡️ Master Strategy Blueprint v3.0 — Production Engine")
 
-RESERVE_FLOOR = 200000.0  # ₹2,00,000 Hard Reserve Floor
+RESERVE_FLOOR = 200000.0  # ₹2,00,000 Hard Capital Floor in LIQUIDCASE
 
 # Working Capital: ₹27,00,000 + Reserve: ₹3,00,000 = ₹30,00,000 Total Capital Base
 if "balance" not in st.session_state:
@@ -27,18 +27,18 @@ if "engine1_core" not in st.session_state:
     }
 
 if "engine2_swing" not in st.session_state:
-    # 40% = ₹12,00,000 across 5 Themes × 4 Tiers (₹60,000/tranche)
+    # 40% = ₹12,00,000 across 5 Themes × 4 Tiers (₹60,000/tranche; Max ₹2,40,000/theme)
     st.session_state.engine2_swing = {}
 
 if "engine3_reserve" not in st.session_state:
-    # 10% = ₹3,00,000 in LIQUIDBEES (Floor: ₹2,00,000; Surplus funds Bottom Fishing)
+    # 10% = ₹3,00,000 in LIQUIDCASE (Surplus funds Deep-Down Buying)
     st.session_state.engine3_reserve = 300000.0
 
 if "trade_log" not in st.session_state:
     st.session_state.trade_log = []
 
 # ==============================================================================
-# 2. SWING MATRIX: ASCENDING VOLUME (Lowest -> Largest)
+# 2. SWING MATRIX: ASCENDING VOLUME (Lowest -> Largest / King)
 # ==============================================================================
 SWING_MATRIX = {
     # Tier 1 (~₹20-30 Cr) -> Tier 2 (~₹25-45 Cr) -> Tier 3 (~₹40-80 Cr) -> Tier 4 (>₹100 Cr)
@@ -70,7 +70,7 @@ SWING_MATRIX = {
         "ITBEES.NS"    # 2nd: Nippon India Nifty IT ETF
     ],
 
-    # Only Auto ETF meeting institutional scale
+    # Only Auto ETF meeting institutional scale (>₹5-10 Cr/day)
     "Auto": [
         "AUTOBEES.NS"
     ],
@@ -92,14 +92,15 @@ TRAILING_STOPS = {
     "Dip-Fishing": 0.05
 }
 
+# Strictly Grade-A Blue-Chip Assets Eligible for Deep-Down Buying
 DIP_CANDIDATES = ["NIFTYBEES.NS", "BANKBEES.NS", "ITBEES.NS", "JUNIORBEES.NS", "GOLDBEES.NS"]
 
 # ==============================================================================
-# 3. CACHED DATA & TECHNICAL INDICATOR CALCULATOR
+# 3. CACHED DATA & TECHNICAL INDICATOR ENGINE
 # ==============================================================================
 @st.cache_data(ttl=300)
 def fetch_ticker_data(symbol: str):
-    """Fetches historical daily bars with error handling."""
+    """Fetches historical daily bars with error resilience."""
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(period="1y", interval="1d")
@@ -180,7 +181,7 @@ if df_raw is not None and len(df_raw) >= 20:
     # Top Metric Bar
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Deployable Working Balance", f"₹{st.session_state.balance:,.2f}")
-    m2.metric("Reserve Pool (LIQUIDBEES)", f"₹{st.session_state.engine3_reserve:,.2f}")
+    m2.metric("Reserve Pool (LIQUIDCASE)", f"₹{st.session_state.engine3_reserve:,.2f}")
     m3.metric(f"Quote ({selected_symbol})", f"₹{latest_price:,.2f}", f"RSI: {latest_rsi:.1f}")
     m4.metric("200-EMA Regime Shield", "PASSED ✅" if regime_shield else "BLOCKED ❌", delta=f"EMA200: ₹{ema_200:,.1f}")
 
@@ -204,8 +205,8 @@ if df_raw is not None and len(df_raw) >= 20:
     # ==============================================================================
     tab1, tab2, tab3, tab4 = st.tabs([
         "Engine 1: 4-Pillar Core (50%)", 
-        "Engine 2: Tactical Swing (40%)", 
-        "Engine 3: Opportunity Reserve & Bottom Fishing (10%)",
+        "Engine 2: 4-Tier Pyramidal Swing (40%)", 
+        "Engine 3: Opportunity Reserve & Deep-Down Buying (10%)",
         "Execution Audit Log"
     ])
 
@@ -269,14 +270,16 @@ if df_raw is not None and len(df_raw) >= 20:
                 st.rerun()
 
     # --------------------------------------------------------------------------
-    # TAB 2: TACTICAL SWING ENGINE
+    # TAB 2: 4-TIER PYRAMIDAL SWING ENGINE (PYRAMID UP)
     # --------------------------------------------------------------------------
     with tab2:
-        st.subheader("Engine 2: Tactical Swing 5x4 Matrix (₹12,00,000 Allocation)")
+        st.subheader("Engine 2: 4-Tier Pyramidal Swing Engine (₹12,00,000 Cap)")
+        st.caption("Rules: ₹60k/tranche • Max 4 Tiers (₹2.4L/theme) • Only add to winners • Dynamic Break-Even Trailing")
+
         sw_col1, sw_col2 = st.columns([2, 1])
 
         with sw_col1:
-            st.markdown("#### Active Swing Positions")
+            st.markdown("#### Active Pyramids")
             swing_records = []
             for k, v in st.session_state.engine2_swing.items():
                 curr_p = get_latest_price(k)
@@ -287,64 +290,108 @@ if df_raw is not None and len(df_raw) >= 20:
                 swing_records.append({
                     "ETF": k,
                     "Theme": v["theme"],
+                    "Pyramid Tier": f"Tier {v.get('tier', 1)} / 4",
                     "Units": v["units"],
                     "Avg Cost": round(v["avg_cost"], 2),
                     "CMP": round(curr_p, 2),
-                    "Peak Price": round(v.get("peak_price", curr_p), 2),
-                    "Return (%)": round(pct_return, 2)
+                    "Invested (₹)": round(invested, 2),
+                    "P&L (%)": f"{pct_return:+.2f}%",
+                    "Next Tier Eligible": "YES ✅" if (pct_return >= 2.5 and v.get('tier', 1) < 4) else "LOCKED 🔒"
                 })
+
             if swing_records:
                 st.dataframe(pd.DataFrame(swing_records), use_container_width=True)
             else:
-                st.info("No active swing positions open.")
+                st.info("No active swing pyramids open. Select an ETF on the right to start Tier 1.")
 
         with sw_col2:
-            st.markdown("#### Deploy Swing Tranche (₹60,000)")
+            st.markdown("#### Deploy / Scale Pyramid")
             sw_theme = st.selectbox("Select Theme", list(SWING_MATRIX.keys()))
             sw_etf = st.selectbox("Select Target ETF", SWING_MATRIX[sw_theme])
 
-            if st.button(f"Acquire Tranche: {sw_etf}"):
-                etf_df = fetch_ticker_data(sw_etf)
-                if etf_df is not None and len(etf_df) >= 20:
-                    etf_df = calculate_indicators(etf_df)
-                    cur_close = float(etf_df['Close'].iloc[-1])
-                    cur_ema20 = float(etf_df['20_EMA'].iloc[-1])
-                    cur_ema200 = float(etf_df['200_EMA'].iloc[-1])
+            # Check existing position state
+            pos = st.session_state.engine2_swing.get(sw_etf, None)
+            curr_tier = pos.get("tier", 0) if pos else 0
+            cur_p = get_latest_price(sw_etf)
+            gain_pct = ((cur_p - pos["avg_cost"]) / pos["avg_cost"] * 100) if (pos and pos["avg_cost"] > 0) else 0.0
 
-                    # 200-EMA Guardrail check
-                    if (cur_close < cur_ema200) or (cur_close < cur_ema20):
-                        st.error(f"Execution Blocked! {sw_etf} is below 200-EMA/20-EMA regime shield.")
-                    else:
-                        tranche_val = 60000.0
-                        qty = int(tranche_val // cur_close)
-                        cost = qty * cur_close
+            # Determine eligibility
+            next_tier = curr_tier + 1
+            can_deploy = False
+            status_msg = ""
 
-                        if st.session_state.balance >= cost:
-                            st.session_state.balance -= cost
-                            prev_pos = st.session_state.engine2_swing.get(sw_etf, {
-                                "units": 0, "avg_cost": 0.0, "theme": sw_theme, "peak_price": cur_close
-                            })
-                            new_u = prev_pos["units"] + qty
-                            new_c = ((prev_pos["units"] * prev_pos["avg_cost"]) + cost) / new_u
+            if curr_tier == 0:
+                can_deploy = True
+                status_msg = f"Ready for **Tier 1 Pilot Entry** (₹60,000)"
+            elif curr_tier == 1:
+                if gain_pct >= 2.5:
+                    can_deploy = True
+                    status_msg = f"Eligible for **Tier 2 Add** (+{gain_pct:.1f}% gain ✅)"
+                else:
+                    status_msg = f"⚠️ Tier 2 Locked: Need $\ge$+2.5% gain (Current: {gain_pct:+.1f}%)"
+            elif curr_tier == 2:
+                if gain_pct >= 6.0:
+                    can_deploy = True
+                    status_msg = f"Eligible for **Tier 3 Add** (+{gain_pct:.1f}% gain ✅)"
+                else:
+                    status_msg = f"⚠️ Tier 3 Locked: Need $\ge$+6.0% gain (Current: {gain_pct:+.1f}%)"
+            elif curr_tier == 3:
+                if gain_pct >= 10.0:
+                    can_deploy = True
+                    status_msg = f"Eligible for **Tier 4 Final Add** (+{gain_pct:.1f}% gain ✅)"
+                else:
+                    status_msg = f"⚠️ Tier 4 Locked: Need $\ge$+10.0% gain (Current: {gain_pct:+.1f}%)"
+            else:
+                status_msg = f"🔒 **Max Pyramid Reached (Tier 4 / ₹2,40,000 filled)**"
 
-                            st.session_state.engine2_swing[sw_etf] = {
-                                "units": new_u,
-                                "avg_cost": new_c,
-                                "theme": sw_theme,
-                                "peak_price": max(prev_pos.get("peak_price", cur_close), cur_close)
-                            }
-                            st.session_state.trade_log.append({
-                                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "Engine": "Tactical-Swing",
-                                "ETF": sw_etf,
-                                "Action": "TRANCHE_BUY",
-                                "Qty": qty,
-                                "Price": round(cur_close, 2)
-                            })
-                            st.success(f"Acquired {qty} units of {sw_etf}!")
-                            st.rerun()
+            st.info(status_msg)
+
+            # Pyramidal Buy Button
+            if next_tier <= 4 and st.button(f"Acquire Tier {next_tier} Tranche (₹60,000)"):
+                if not can_deploy:
+                    st.error("Pyramid rule violation: Cannot add to an unconfirmed or losing trade!")
+                else:
+                    etf_df = fetch_ticker_data(sw_etf)
+                    if etf_df is not None and len(etf_df) >= 20:
+                        etf_df = calculate_indicators(etf_df)
+                        cur_close = float(etf_df['Close'].iloc[-1])
+                        cur_ema20 = float(etf_df['20_EMA'].iloc[-1])
+                        cur_ema200 = float(etf_df['200_EMA'].iloc[-1])
+
+                        # Regime check for Tier 1
+                        if curr_tier == 0 and ((cur_close < cur_ema200) or (cur_close < cur_ema20)):
+                            st.error(f"Execution Blocked! {sw_etf} is below 200-EMA/20-EMA shield.")
                         else:
-                            st.error("Insufficient working liquidity.")
+                            tranche_val = 60000.0
+                            qty = int(tranche_val // cur_close)
+                            cost = qty * cur_close
+
+                            if st.session_state.balance >= cost:
+                                st.session_state.balance -= cost
+                                prev_units = pos["units"] if pos else 0
+                                prev_cost = pos["avg_cost"] if pos else 0.0
+                                new_u = prev_units + qty
+                                new_c = ((prev_units * prev_cost) + cost) / new_u
+
+                                st.session_state.engine2_swing[sw_etf] = {
+                                    "units": new_u,
+                                    "avg_cost": new_c,
+                                    "theme": sw_theme,
+                                    "tier": next_tier,
+                                    "peak_price": max(pos.get("peak_price", cur_close) if pos else cur_close, cur_close)
+                                }
+                                st.session_state.trade_log.append({
+                                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "Engine": f"Swing-Pyramid-T{next_tier}",
+                                    "ETF": sw_etf,
+                                    "Action": f"PYRAMID_BUY_T{next_tier}",
+                                    "Qty": qty,
+                                    "Price": round(cur_close, 2)
+                                })
+                                st.success(f"Successfully scaled into Tier {next_tier} for {sw_etf}!")
+                                st.rerun()
+                            else:
+                                st.error("Insufficient working balance.")
 
         st.markdown("---")
         st.markdown("#### ⚡ 3:15 PM Automated Guardrails & Siphon Routine")
@@ -354,6 +401,7 @@ if df_raw is not None and len(df_raw) >= 20:
                 p = get_latest_price(sym)
                 cost = pos["avg_cost"]
                 units = pos["units"]
+                tier = pos.get("tier", 1)
                 peak = max(pos.get("peak_price", p), p)
                 st.session_state.engine2_swing[sym]["peak_price"] = peak
                 gain_pct = (p - cost) / cost if cost > 0 else 0.0
@@ -375,42 +423,53 @@ if df_raw is not None and len(df_raw) >= 20:
                     st.info(f"Siphoned ₹{harvest_cash:,.2f} from {sym} to Engine 3 Reserve!")
                     scanned_actions += 1
 
-                # RULE 2: Trailing Stop Loss from Peak
-                stop_threshold = TRAILING_STOPS.get(pos["theme"], 0.07)
+                # RULE 2: Dynamic Pyramidal Trailing Stop
+                base_stop = TRAILING_STOPS.get(pos["theme"], 0.07)
                 drawdown_from_peak = (p - peak) / peak if peak > 0 else 0.0
-                if drawdown_from_peak <= -stop_threshold:
+                
+                triggered = False
+                if tier == 1 and drawdown_from_peak <= -base_stop:
+                    triggered = True
+                elif tier >= 2:
+                    # Breakeven guardrail: If price drops below average cost, exit immediately
+                    if p <= cost or drawdown_from_peak <= -0.05:
+                        triggered = True
+
+                if triggered:
                     liquidation_cash = units * p
                     st.session_state.balance += liquidation_cash
                     del st.session_state.engine2_swing[sym]
                     st.session_state.trade_log.append({
                         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Engine": "Swing-Stop",
+                        "Engine": "Swing-Pyramid-Stop",
                         "ETF": sym,
-                        "Action": "TRAILING_STOP_EXIT",
+                        "Action": f"STOP_EXIT_T{tier}",
                         "Qty": units,
                         "Price": round(p, 2)
                     })
-                    st.warning(f"Trailing Stop Triggered on {sym}. Position liquidated at ₹{p:,.2f}.")
+                    st.warning(f"Pyramid Exit Triggered on {sym} (Tier {tier}). Position closed at ₹{p:,.2f}.")
                     scanned_actions += 1
 
             if scanned_actions == 0:
-                st.write("All swing positions are within nominal guardrails.")
+                st.write("All pyramid positions healthy. No stops or siphon levels breached.")
             else:
                 st.rerun()
 
     # --------------------------------------------------------------------------
-    # TAB 3: OPPORTUNITY RESERVE & BOTTOM FISHING
+    # TAB 3: OPPORTUNITY RESERVE & DEEP-DOWN BUYING (PYRAMID DOWN)
     # --------------------------------------------------------------------------
     with tab3:
-        st.subheader("Engine 3: Opportunity Reserve & Automated Bottom Fishing")
+        st.subheader("Engine 3: Opportunity Reserve & Deep-Down Buying")
+        st.caption("Quarantined crash reserve in LIQUIDCASE. Buys deep panic (RSI < 35, DD ≥ 8%) on Grade-A index giants.")
+        
         r1, r2, r3 = st.columns(3)
-        r1.metric("LIQUIDBEES Reserve Balance", f"₹{st.session_state.engine3_reserve:,.2f}")
+        r1.metric("LIQUIDCASE Reserve Balance", f"₹{st.session_state.engine3_reserve:,.2f}")
         r2.metric("Hard Capital Floor", f"₹{RESERVE_FLOOR:,.2f}")
         excess_ammo = max(0.0, st.session_state.engine3_reserve - RESERVE_FLOOR)
         r3.metric("Deployable Dip Ammo", f"₹{excess_ammo:,.2f}")
 
         st.markdown("---")
-        st.markdown("### 🎣 Automated Bottom-Fishing Scanner (Grade-A Oversold Candidates)")
+        st.markdown("### 🎣 Automated Deep-Down Buying Scanner (Grade-A Index Giants Only)")
         st.caption("Triggers: RSI < 35 AND Drawdown ≥ 8% from 52W High AND Green Daily Reversal Confirmation.")
 
         dip_scan = []
@@ -434,7 +493,7 @@ if df_raw is not None and len(df_raw) >= 20:
                     "Price (₹)": round(last_row['Close'], 2),
                     "RSI(14)": round(rsi_val, 1),
                     "52W Drawdown": f"{dd_val:.1f}%",
-                    "Target 20-EMA": round(last_row['20_EMA'], 2),
+                    "Mean Reversion Target (20-EMA)": round(last_row['20_EMA'], 2),
                     "Signal": status
                 })
 
@@ -443,7 +502,7 @@ if df_raw is not None and len(df_raw) >= 20:
         st.markdown("#### Deploy Dip Ammo (₹50,000 Tranche from Reserve Surplus)")
         target_dip_etf = st.selectbox("Select Dip Target", DIP_CANDIDATES)
 
-        if st.button(f"🎣 Execute Bottom-Fishing Buy: {target_dip_etf}"):
+        if st.button(f"🎣 Execute Deep-Down Buy: {target_dip_etf}"):
             tranche_size = 50000.0
             if excess_ammo < tranche_size:
                 st.error(f"Cannot breach Reserve Floor! Available Ammo: ₹{excess_ammo:,.2f} (Floor: ₹{RESERVE_FLOOR:,.2f})")

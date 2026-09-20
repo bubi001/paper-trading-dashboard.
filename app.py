@@ -173,8 +173,7 @@ if df_raw is not None and len(df_raw) >= 20:
     m1.metric("Deployable Working Balance", f"₹{st.session_state.balance:,.2f}")
     m2.metric("Reserve Pool (LIQUIDCASE)", f"₹{st.session_state.engine3_reserve:,.2f}")
     m3.metric(f"Quote ({selected_symbol})", f"₹{latest_price:,.2f}", f"RSI: {latest_rsi:.1f}")
-    m4.metric("200-EMA Regime Shield", "PASSED ✅" if regime_shield else "BLOCKED ❌", delta=f"EMA200: ₹{ema_200:,.1f}")
-
+    m4.metric("Regime Shield", "PASSED ✅" if regime_shield else "BLOCKED ❌", delta=f"20-EMA: ₹{ema_20:,.1f} | 200-EMA: ₹{ema_200:,.1f}")
     # Interactive Chart View
     fig = go.Figure()
     fig.add_trace(go.Candlestick(

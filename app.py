@@ -4,82 +4,73 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
+import json
+import os
 
 # ==============================================================================
-# 1. PAGE SETUP & SESSION STATE INITIALIZATION (₹30,00,000 BASELINE)
+# 1. PAGE SETUP & PERMANENT STATE PERSISTENCE ENGINE
 # ==============================================================================
 st.set_page_config(page_title="Master Strategy Blueprint v3.0", layout="wide", page_icon="🛡️")
 st.title("🛡️ Master Strategy Blueprint v3.0 — Production Engine")
 
-RESERVE_FLOOR = 200000.0  # ₹2,00,000 Hard Capital Floor in LIQUIDCASE
+RESERVE_FLOOR = 200000.0  # ₹2,00,000 Hard Reserve Floor in LIQUIDCASE
+DATA_FILE = "portfolio_data.json"
 
-# Working Capital: ₹27,00,000 + Reserve: ₹3,00,000 = ₹30,00,000 Total Capital Base
-if "balance" not in st.session_state:
-    st.session_state.balance = 2700000.0  # Funds Engine 1 (₹15L) & Engine 2 (₹12L)
+def load_portfolio():
+    """Loads saved portfolio state from disk if it exists."""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
 
-if "engine1_core" not in st.session_state:
-    # 50% = ₹15,00,000 across 4 Factor Pillars (Monthly Tranche: ₹1,50,000)
-    st.session_state.engine1_core = {
-        "MOM30IETF.NS":  {"units": 0, "avg_cost": 0.0, "target_tranche": 45000.0, "name": "Nifty200 Momentum 30"},
-        "MID150BEES.NS": {"units": 0, "avg_cost": 0.0, "target_tranche": 40000.0, "name": "Nifty Midcap 150"},
-        "JUNIORBEES.NS": {"units": 0, "avg_cost": 0.0, "target_tranche": 35000.0, "name": "Nifty Next 50"},
-        "MON100.NS":     {"units": 0, "avg_cost": 0.0, "target_tranche": 30000.0, "name": "Nasdaq 100 Global Tech"}
+def save_portfolio():
+    """Saves current portfolio state to disk."""
+    state_to_save = {
+        "balance": st.session_state.balance,
+        "engine1_core": st.session_state.engine1_core,
+        "engine2_swing": st.session_state.engine2_swing,
+        "engine3_reserve": st.session_state.engine3_reserve,
+        "trade_log": st.session_state.trade_log
     }
+    with open(DATA_FILE, "w") as f:
+        json.dump(state_to_save, f, indent=4, default=str)
 
-if "engine2_swing" not in st.session_state:
-    # 40% = ₹12,00,000 across 5 Themes × 4 Tiers (₹60,000/tranche; Max ₹2,40,000/theme)
-    st.session_state.engine2_swing = {}
+# Initialize Session State from Permanent Storage
+saved_data = load_portfolio()
 
-if "engine3_reserve" not in st.session_state:
-    # 10% = ₹3,00,000 in LIQUIDCASE (Surplus funds Deep-Down Buying)
-    st.session_state.engine3_reserve = 300000.0
-
-if "trade_log" not in st.session_state:
-    st.session_state.trade_log = []
+if "balance" not in st.session_state:
+    if saved_data:
+        st.session_state.balance = saved_data.get("balance", 2700000.0)
+        st.session_state.engine1_core = saved_data.get("engine1_core", {})
+        st.session_state.engine2_swing = saved_data.get("engine2_swing", {})
+        st.session_state.engine3_reserve = saved_data.get("engine3_reserve", 300000.0)
+        st.session_state.trade_log = saved_data.get("trade_log", [])
+    else:
+        st.session_state.balance = 2700000.0
+        st.session_state.engine1_core = {
+            "MOM30IETF.NS":  {"units": 0, "avg_cost": 0.0, "target_tranche": 45000.0, "name": "Nifty200 Momentum 30"},
+            "MID150BEES.NS": {"units": 0, "avg_cost": 0.0, "target_tranche": 40000.0, "name": "Nifty Midcap 150"},
+            "JUNIORBEES.NS": {"units": 0, "avg_cost": 0.0, "target_tranche": 35000.0, "name": "Nifty Next 50"},
+            "MON100.NS":     {"units": 0, "avg_cost": 0.0, "target_tranche": 30000.0, "name": "Nasdaq 100 Global Tech"}
+        }
+        st.session_state.engine2_swing = {}
+        st.session_state.engine3_reserve = 300000.0
+        st.session_state.trade_log = []
+        save_portfolio()
 
 # ==============================================================================
 # 2. SWING MATRIX: ASCENDING VOLUME (Lowest -> Largest / King)
 # ==============================================================================
 SWING_MATRIX = {
-    # Tier 1 (~₹20-30 Cr) -> Tier 2 (~₹25-45 Cr) -> Tier 3 (~₹40-80 Cr) -> Tier 4 (>₹100 Cr)
-    "Gold": [
-        "ICICIGOLD.NS",
-        "HDFCGOLD.NS",
-        "TATAGOLD.NS",
-        "GOLDBEES.NS"
-    ],
-
-    # Tier 1 (~₹30-50 Cr) -> Tier 2 (~₹40-80 Cr) -> Tier 3 (~₹60-120 Cr) -> Tier 4 (>₹150 Cr)
-    "Silver": [
-        "HDFCSILVER.NS",
-        "SILVERIETF.NS",
-        "TATSILV.NS",
-        "SILVERBEES.NS"
-    ],
-
-    # Tier 1 (~₹10-15 Cr) -> Tier 2 (~₹20-45 Cr) -> Tier 3 (>₹40-80 Cr)
-    "Banking": [
-        "SETFNIFBK.NS",
-        "PSUBNKBEES.NS",
-        "BANKBEES.NS"
-    ],
-
-    # Tier 1 (~₹2 Cr/day) -> Tier 2 (~₹30 Cr/day King)
-    "IT": [
-        "ITIETF.NS",   # 1st: ICICI Prudential Nifty IT ETF
-        "ITBEES.NS"    # 2nd: Nippon India Nifty IT ETF
-    ],
-
-    # Only Auto ETF meeting institutional scale (>₹5-10 Cr/day)
-    "Auto": [
-        "AUTOBEES.NS"
-    ],
-
-    # Rotational Tactical Theme
-    "Defence/PSU": [
-        "MODEFENCE.NS",
-        "CPSEETF.NS"
-    ]
+    "Gold": ["ICICIGOLD.NS", "HDFCGOLD.NS", "TATAGOLD.NS", "GOLDBEES.NS"],
+    "Silver": ["HDFCSILVER.NS", "SILVERIETF.NS", "TATSILV.NS", "SILVERBEES.NS"],
+    "Banking": ["SETFNIFBK.NS", "PSUBNKBEES.NS", "BANKBEES.NS"],
+    "IT": ["ITIETF.NS", "ITBEES.NS"],
+    "Auto": ["AUTOBEES.NS"],
+    "Defence/PSU": ["MODEFENCE.NS", "CPSEETF.NS"]
 }
 
 TRAILING_STOPS = {
@@ -92,7 +83,6 @@ TRAILING_STOPS = {
     "Dip-Fishing": 0.05
 }
 
-# Strictly Grade-A Blue-Chip Assets Eligible for Deep-Down Buying
 DIP_CANDIDATES = ["NIFTYBEES.NS", "BANKBEES.NS", "ITBEES.NS", "JUNIORBEES.NS", "GOLDBEES.NS"]
 
 # ==============================================================================
@@ -159,6 +149,7 @@ if st.sidebar.button("Reset Portfolio to Baseline (₹30L)"):
     st.session_state.engine2_swing = {}
     st.session_state.engine3_reserve = 300000.0
     st.session_state.trade_log = []
+    save_portfolio()
     st.sidebar.success("Reset portfolio to ₹30,00,000 baseline!")
     st.rerun()
 
@@ -175,7 +166,6 @@ if df_raw is not None and len(df_raw) >= 20:
     ema_200 = float(df['200_EMA'].iloc[-1])
     latest_rsi = float(df['RSI'].iloc[-1])
 
-    # Guardrail rules
     regime_shield = (latest_price > ema_20) and (latest_price > ema_200)
 
     # Top Metric Bar
@@ -266,6 +256,7 @@ if df_raw is not None and len(df_raw) >= 20:
                             "Qty": qty,
                             "Price": round(price, 2)
                         })
+                save_portfolio()
                 st.success("Successfully deployed monthly 4-Pillar Core tranche!")
                 st.rerun()
 
@@ -309,13 +300,11 @@ if df_raw is not None and len(df_raw) >= 20:
             sw_theme = st.selectbox("Select Theme", list(SWING_MATRIX.keys()))
             sw_etf = st.selectbox("Select Target ETF", SWING_MATRIX[sw_theme])
 
-            # Check existing position state
             pos = st.session_state.engine2_swing.get(sw_etf, None)
             curr_tier = pos.get("tier", 0) if pos else 0
             cur_p = get_latest_price(sw_etf)
             gain_pct = ((cur_p - pos["avg_cost"]) / pos["avg_cost"] * 100) if (pos and pos["avg_cost"] > 0) else 0.0
 
-            # Determine eligibility
             next_tier = curr_tier + 1
             can_deploy = False
             status_msg = ""
@@ -346,7 +335,6 @@ if df_raw is not None and len(df_raw) >= 20:
 
             st.info(status_msg)
 
-            # Pyramidal Buy Button
             if next_tier <= 4 and st.button(f"Acquire Tier {next_tier} Tranche (₹60,000)"):
                 if not can_deploy:
                     st.error("Pyramid rule violation: Cannot add to an unconfirmed or losing trade!")
@@ -358,7 +346,6 @@ if df_raw is not None and len(df_raw) >= 20:
                         cur_ema20 = float(etf_df['20_EMA'].iloc[-1])
                         cur_ema200 = float(etf_df['200_EMA'].iloc[-1])
 
-                        # Regime check for Tier 1
                         if curr_tier == 0 and ((cur_close < cur_ema200) or (cur_close < cur_ema20)):
                             st.error(f"Execution Blocked! {sw_etf} is below 200-EMA/20-EMA shield.")
                         else:
@@ -388,6 +375,7 @@ if df_raw is not None and len(df_raw) >= 20:
                                     "Qty": qty,
                                     "Price": round(cur_close, 2)
                                 })
+                                save_portfolio()
                                 st.success(f"Successfully scaled into Tier {next_tier} for {sw_etf}!")
                                 st.rerun()
                             else:
@@ -431,7 +419,6 @@ if df_raw is not None and len(df_raw) >= 20:
                 if tier == 1 and drawdown_from_peak <= -base_stop:
                     triggered = True
                 elif tier >= 2:
-                    # Breakeven guardrail: If price drops below average cost, exit immediately
                     if p <= cost or drawdown_from_peak <= -0.05:
                         triggered = True
 
@@ -450,10 +437,11 @@ if df_raw is not None and len(df_raw) >= 20:
                     st.warning(f"Pyramid Exit Triggered on {sym} (Tier {tier}). Position closed at ₹{p:,.2f}.")
                     scanned_actions += 1
 
-            if scanned_actions == 0:
-                st.write("All pyramid positions healthy. No stops or siphon levels breached.")
-            else:
+            if scanned_actions > 0:
+                save_portfolio()
                 st.rerun()
+            else:
+                st.write("All pyramid positions healthy. No stops or siphon levels breached.")
 
     # --------------------------------------------------------------------------
     # TAB 3: OPPORTUNITY RESERVE & DEEP-DOWN BUYING (PYRAMID DOWN)
@@ -534,6 +522,7 @@ if df_raw is not None and len(df_raw) >= 20:
                         "Qty": dip_units,
                         "Price": round(p_dip, 2)
                     })
+                    save_portfolio()
                     st.success(f"Deployed ₹{dip_cost:,.2f} into {target_dip_etf} at ₹{p_dip:.2f} using Reserve Pool!")
                     st.rerun()
 

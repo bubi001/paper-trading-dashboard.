@@ -6,19 +6,19 @@ import plotly.graph_objects as go
 from datetime import datetime
 
 # ==============================================================================
-# 1. PAGE SETUP & SESSION STATE INITIALIZATION
+# 1. PAGE SETUP & SESSION STATE INITIALIZATION (₹30,00,000 BASELINE)
 # ==============================================================================
 st.set_page_config(page_title="Master Strategy Blueprint v3.0", layout="wide", page_icon="🛡️")
 st.title("🛡️ Master Strategy Blueprint v3.0 — Production Engine")
 
-RESERVE_FLOOR = 200000.0  # ₹2,00,000 Hard Capital Floor
+RESERVE_FLOOR = 200000.0  # ₹2,00,000 Hard Reserve Floor
 
-# Baseline Total Capital: ₹30,00,000
+# Working Capital: ₹27,00,000 + Reserve: ₹3,00,000 = ₹30,00,000 Total Capital Base
 if "balance" not in st.session_state:
-    st.session_state.balance = 1200000.0  # Working liquidity for Core & Swings
+    st.session_state.balance = 2700000.0  # Funds Engine 1 (₹15L) & Engine 2 (₹12L)
 
 if "engine1_core" not in st.session_state:
-    # 50% Allocation = ₹15,00,000 (Monthly Tranche: ₹1,50,000 across 4 Factor Pillars)
+    # 50% = ₹15,00,000 across 4 Factor Pillars (Monthly Tranche: ₹1,50,000)
     st.session_state.engine1_core = {
         "MOM30IETF.NS":  {"units": 0, "avg_cost": 0.0, "target_tranche": 45000.0, "name": "Nifty200 Momentum 30"},
         "MID150BEES.NS": {"units": 0, "avg_cost": 0.0, "target_tranche": 40000.0, "name": "Nifty Midcap 150"},
@@ -27,46 +27,79 @@ if "engine1_core" not in st.session_state:
     }
 
 if "engine2_swing" not in st.session_state:
-    # 40% Allocation = ₹12,00,000 (₹60,000/tranche across 5 themes)
+    # 40% = ₹12,00,000 across 5 Themes × 4 Tiers (₹60,000/tranche)
     st.session_state.engine2_swing = {}
 
 if "engine3_reserve" not in st.session_state:
-    # 10% Allocation = ₹3,00,000 in LIQUIDBEES (Surplus fuels Bottom Fishing)
+    # 10% = ₹3,00,000 in LIQUIDBEES (Floor: ₹2,00,000; Surplus funds Bottom Fishing)
     st.session_state.engine3_reserve = 300000.0
 
 if "trade_log" not in st.session_state:
     st.session_state.trade_log = []
 
 # ==============================================================================
-# 2. STRATEGY MATRICES & GUARDRAILS
+# 2. SWING MATRIX: ASCENDING VOLUME (Lowest -> Largest)
 # ==============================================================================
 SWING_MATRIX = {
-    "Defence/Capital Goods": ["MODEFENCE.NS", "CPSEETF.NS"],
-    "Silver": ["SILVERBEES.NS", "HDFCSILVER.NS", "SILVERIETF.NS", "AXISSILVER.NS"],
-    "Gold": ["GOLDBEES.NS", "HDFCGOLD.NS", "KOTAKGOLD.NS", "SETFGOLD.NS"],
-    "Banking": ["BANKBEES.NS", "SETFNIFBK.NS", "KOTAKBKETF.NS", "HDFCBANKETF.NS"],
-    "IT": ["ITBEES.NS", "ICICITECH.NS", "SETFIT.NS", "AXISTEC.NS"],
-    "Auto": ["AUTOBEES.NS", "AUTOIETF.NS", "ICICIAUTO.NS", "TATAETFAUT.NS"]
+    # Tier 1 (~₹20-30 Cr) -> Tier 2 (~₹25-45 Cr) -> Tier 3 (~₹40-80 Cr) -> Tier 4 (>₹100 Cr)
+    "Gold": [
+        "ICICIGOLD.NS",
+        "HDFCGOLD.NS",
+        "TATAGOLD.NS",
+        "GOLDBEES.NS"
+    ],
+
+    # Tier 1 (~₹30-50 Cr) -> Tier 2 (~₹40-80 Cr) -> Tier 3 (~₹60-120 Cr) -> Tier 4 (>₹150 Cr)
+    "Silver": [
+        "HDFCSILVER.NS",
+        "SILVERIETF.NS",
+        "TATSILV.NS",
+        "SILVERBEES.NS"
+    ],
+
+    # Tier 1 (~₹10-15 Cr) -> Tier 2 (~₹20-45 Cr) -> Tier 3 (>₹40-80 Cr)
+    "Banking": [
+        "SETFNIFBK.NS",
+        "PSUBNKBEES.NS",
+        "BANKBEES.NS"
+    ],
+
+    # Tier 1 (~₹2 Cr/day) -> Tier 2 (~₹30 Cr/day King)
+    "IT": [
+        "ITIETF.NS",   # 1st: ICICI Prudential Nifty IT ETF
+        "ITBEES.NS"    # 2nd: Nippon India Nifty IT ETF
+    ],
+
+    # Only Auto ETF meeting institutional scale
+    "Auto": [
+        "AUTOBEES.NS"
+    ],
+
+    # Rotational Tactical Theme
+    "Defence/PSU": [
+        "MODEFENCE.NS",
+        "CPSEETF.NS"
+    ]
 }
 
 TRAILING_STOPS = {
-    "Defence/Capital Goods": 0.08,
-    "Silver": 0.09,
     "Gold": 0.07,
+    "Silver": 0.09,
     "Banking": 0.07,
     "IT": 0.07,
     "Auto": 0.07,
+    "Defence/PSU": 0.08,
     "Dip-Fishing": 0.05
 }
 
 DIP_CANDIDATES = ["NIFTYBEES.NS", "BANKBEES.NS", "ITBEES.NS", "JUNIORBEES.NS", "GOLDBEES.NS"]
 
 # ==============================================================================
-# 3. CACHED MARKET DATA & TECHNICAL INDICATOR ENGINE
+# 3. CACHED DATA & TECHNICAL INDICATOR CALCULATOR
 # ==============================================================================
 @st.cache_data(ttl=300)
 def fetch_ticker_data(symbol: str):
-    """Fetches 1 year of daily history with error handling."""
+    """Fetches historical daily bars with error handling."""
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(period="1y", interval="1d")
@@ -84,7 +117,7 @@ def calculate_indicators(df):
     span_200 = min(200, len(df))
     df['200_EMA'] = df['Close'].ewm(span=span_200, adjust=False).mean()
 
-    # RSI (14 periods)
+    # 14-day RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
     loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
@@ -106,7 +139,7 @@ def get_latest_price(symbol: str) -> float:
 # ==============================================================================
 # 4. SIDEBAR CONTROLS
 # ==============================================================================
-st.sidebar.header("🕹️ Blueprint Cockpit")
+st.sidebar.header("🕹️ Strategy Controls")
 
 all_symbols = sorted(list(set(
     list(st.session_state.engine1_core.keys()) +
@@ -118,7 +151,7 @@ selected_symbol = st.sidebar.selectbox("Analyze Instrument", all_symbols, index=
 auto_mode = st.sidebar.checkbox("Enable 3:15 PM Automated Guardrails", value=True)
 
 if st.sidebar.button("Reset Portfolio to Baseline (₹30L)"):
-    st.session_state.balance = 1200000.0
+    st.session_state.balance = 2700000.0
     for k in st.session_state.engine1_core:
         st.session_state.engine1_core[k]["units"] = 0
         st.session_state.engine1_core[k]["avg_cost"] = 0.0
@@ -129,7 +162,7 @@ if st.sidebar.button("Reset Portfolio to Baseline (₹30L)"):
     st.rerun()
 
 # ==============================================================================
-# 5. TECHNICAL CHART & REAL-TIME ANALYSIS BANNER
+# 5. TECHNICAL ANALYSIS DISPLAY
 # ==============================================================================
 df_raw = fetch_ticker_data(selected_symbol)
 
@@ -141,7 +174,7 @@ if df_raw is not None and len(df_raw) >= 20:
     ema_200 = float(df['200_EMA'].iloc[-1])
     latest_rsi = float(df['RSI'].iloc[-1])
 
-    # Guardrails
+    # Guardrail rules
     regime_shield = (latest_price > ema_20) and (latest_price > ema_200)
 
     # Top Metric Bar
@@ -184,16 +217,11 @@ if df_raw is not None and len(df_raw) >= 20:
         st.caption("Allocations: MOM30 (30%), MID150 (26.7%), JUNIOR (23.3%), MON100 (20%) — Tranche: ₹1.5L/month")
 
         core_records = []
-        total_core_invested = 0.0
-        total_core_current = 0.0
-
         for k, v in st.session_state.engine1_core.items():
             curr_p = get_latest_price(k)
             invested = v["units"] * v["avg_cost"]
             cur_val = v["units"] * curr_p
             pnl = cur_val - invested
-            total_core_invested += invested
-            total_core_current += cur_val
 
             core_records.append({
                 "ETF": k,
@@ -204,43 +232,41 @@ if df_raw is not None and len(df_raw) >= 20:
                 "Invested (₹)": round(invested, 2),
                 "Current Value (₹)": round(cur_val, 2),
                 "P&L (₹)": round(pnl, 2),
-                "Target Monthly": f"₹{v['target_tranche']:,.0f}"
+                "Monthly Tranche": f"₹{v['target_tranche']:,.0f}"
             })
 
         st.dataframe(pd.DataFrame(core_records), use_container_width=True)
 
-        c_exec1, c_exec2 = st.columns([2, 1])
-        with c_exec1:
-            if st.button("🚀 Execute Monthly Core Tranche (₹1,50,000)"):
-                needed = sum(v["target_tranche"] for v in st.session_state.engine1_core.values())
-                if st.session_state.balance < needed:
-                    st.error(f"Insufficient working liquidity! Need ₹{needed:,.2f}, Available: ₹{st.session_state.balance:,.2f}")
-                else:
-                    for etf, v in st.session_state.engine1_core.items():
-                        price = get_latest_price(etf)
-                        if price > 0:
-                            qty = int(v["target_tranche"] // price)
-                            cost = qty * price
-                            st.session_state.balance -= cost
-                            
-                            prev_u = v["units"]
-                            prev_c = v["avg_cost"]
-                            new_u = prev_u + qty
-                            new_c = ((prev_u * prev_c) + cost) / new_u if new_u > 0 else price
-                            
-                            st.session_state.engine1_core[etf]["units"] = new_u
-                            st.session_state.engine1_core[etf]["avg_cost"] = new_c
+        if st.button("🚀 Execute Monthly Core Tranche (₹1,50,000)"):
+            needed = sum(v["target_tranche"] for v in st.session_state.engine1_core.values())
+            if st.session_state.balance < needed:
+                st.error(f"Insufficient working balance! Needed: ₹{needed:,.2f}, Available: ₹{st.session_state.balance:,.2f}")
+            else:
+                for etf, v in st.session_state.engine1_core.items():
+                    price = get_latest_price(etf)
+                    if price > 0:
+                        qty = int(v["target_tranche"] // price)
+                        cost = qty * price
+                        st.session_state.balance -= cost
+                        
+                        prev_u = v["units"]
+                        prev_c = v["avg_cost"]
+                        new_u = prev_u + qty
+                        new_c = ((prev_u * prev_c) + cost) / new_u if new_u > 0 else price
+                        
+                        st.session_state.engine1_core[etf]["units"] = new_u
+                        st.session_state.engine1_core[etf]["avg_cost"] = new_c
 
-                            st.session_state.trade_log.append({
-                                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "Engine": "Core-Wealth",
-                                "ETF": etf,
-                                "Action": "MONTHLY_SIP_BUY",
-                                "Qty": qty,
-                                "Price": round(price, 2)
-                            })
-                    st.success("Successfully deployed monthly 4-Pillar Core tranche!")
-                    st.rerun()
+                        st.session_state.trade_log.append({
+                            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Engine": "Core-Wealth",
+                            "ETF": etf,
+                            "Action": "MONTHLY_SIP_BUY",
+                            "Qty": qty,
+                            "Price": round(price, 2)
+                        })
+                st.success("Successfully deployed monthly 4-Pillar Core tranche!")
+                st.rerun()
 
     # --------------------------------------------------------------------------
     # TAB 2: TACTICAL SWING ENGINE
@@ -250,7 +276,7 @@ if df_raw is not None and len(df_raw) >= 20:
         sw_col1, sw_col2 = st.columns([2, 1])
 
         with sw_col1:
-            st.markdown("#### Active Swing Holdings")
+            st.markdown("#### Active Swing Positions")
             swing_records = []
             for k, v in st.session_state.engine2_swing.items():
                 curr_p = get_latest_price(k)
@@ -287,7 +313,7 @@ if df_raw is not None and len(df_raw) >= 20:
 
                     # 200-EMA Guardrail check
                     if (cur_close < cur_ema200) or (cur_close < cur_ema20):
-                        st.error(f"Execution Blocked! {sw_etf} is below 200-EMA/20-EMA shield.")
+                        st.error(f"Execution Blocked! {sw_etf} is below 200-EMA/20-EMA regime shield.")
                     else:
                         tranche_val = 60000.0
                         qty = int(tranche_val // cur_close)
@@ -364,11 +390,11 @@ if df_raw is not None and len(df_raw) >= 20:
                         "Qty": units,
                         "Price": round(p, 2)
                     })
-                    st.warning(f"Trailing Stop Triggered on {sym}. Position closed at ₹{p:,.2f}.")
+                    st.warning(f"Trailing Stop Triggered on {sym}. Position liquidated at ₹{p:,.2f}.")
                     scanned_actions += 1
 
             if scanned_actions == 0:
-                st.write("All positions healthy. No stop-losses or harvest thresholds breached.")
+                st.write("All swing positions are within nominal guardrails.")
             else:
                 st.rerun()
 

@@ -537,3 +537,18 @@ if df_raw is not None and len(df_raw) >= 20:
 
 else:
     st.warning("Fetching market data or selected ticker has insufficient history. Please refresh.")
+import streamlit as st
+import streamlit.components.v1 as components
+
+# Keep Streamlit session active by sending a ping every 4 minutes (240,000 ms)
+components.html(
+    """
+    <script>
+        function keepAlive() {
+            window.parent.postMessage({type: 'streamlit:render'}, '*');
+        }
+        setInterval(keepAlive, 240,000);
+    </script>
+    """,
+    height=0,
+)

@@ -111,15 +111,15 @@ def get_trend_status(symbol: str):
     ltp = float(df['Close'].iloc[-1])
     sma200 = float(df['Close'].rolling(window=200).mean().iloc[-1])
     dist = ((ltp - sma200) / sma200) * 100.0
+    
     buffer_line = sma200 * 0.98
-
     if ltp < buffer_line:
         regime = "BEAR (PARKED)"
     elif ltp > sma200:
         regime = "BULL (INVESTED)"
     else:
         regime = "BUFFER ZONE"
-
+        
     return {"ltp": round(ltp, 2), "sma200": round(sma200, 2), "dist": round(dist, 2), "regime": regime}
 
 # ==============================================================================
@@ -152,7 +152,7 @@ def execute_sip_tranche(execution_date_str: str):
         ltp = status["ltp"]
         if ltp <= 0:
             continue
-
+            
         # RULE: If Bearish (< 200-DMA - 2%), park directly into LIQUIDBEES pool
         if status["regime"] == "BEAR (PARKED)":
             st.session_state.cash_balance -= tranche_per_etf
@@ -185,13 +185,14 @@ def execute_exit_to_liquid(symbol: str, ltp: float):
     qty = pos["units"]
     if qty <= 0:
         return
-
+        
     proceeds = qty * ltp
     pnl = proceeds - (qty * pos["avg_cost"])
+    
     st.session_state.parked_capital[symbol] += proceeds
     pos["units"] = 0
     pos["avg_cost"] = 0.0
-
+    
     record_trade("EXIT_TO_LIQUID", symbol, qty, ltp, proceeds, f"Price < 200-SMA -2% | Realized P&L: ₹{pnl:+,.2f}")
     save_state()
 
@@ -200,9 +201,10 @@ def execute_reentry_from_liquid(symbol: str, ltp: float):
     pool = st.session_state.parked_capital.get(symbol, 0.0)
     if pool <= 0:
         return
-
+        
     units = int(pool // ltp)
     actual_cost = units * ltp
+    
     if units > 0:
         pos = st.session_state.holdings[symbol]
         pos["units"] = units
@@ -210,7 +212,7 @@ def execute_reentry_from_liquid(symbol: str, ltp: float):
         remainder = pool - actual_cost
         st.session_state.cash_balance += remainder
         st.session_state.parked_capital[symbol] = 0.0
-
+        
         record_trade("REENTRY_BUY", symbol, units, ltp, actual_cost, "Reclaimed 200-SMA: Redeployed from Liquid")
         save_state()
 
@@ -246,7 +248,7 @@ tabs = st.tabs(["📊 Market & Trend Matrix", "📅 15th Monthly SIP", "⚖️ P
 with tabs[0]:
     st.subheader("Automated 200-DMA Trend-Following Scanner")
     st.info("💡 **Rule:** Price < 200-SMA by >2% triggers an EXIT to LIQUIDBEES. Price > 200-SMA triggers RE-ENTRY.")
-
+    
     matrix_rows = []
     for sym, info in CORE_ETFS.items():
         data = market_data[sym]
@@ -254,7 +256,7 @@ with tabs[0]:
         parked = st.session_state.parked_capital[sym]
         curr_val = pos["units"] * data["ltp"]
         pnl = curr_val - (pos["units"] * pos["avg_cost"]) if pos["units"] > 0 else 0.0
-
+        
         matrix_rows.append({
             "Ticker": sym,
             "Name": info["name"],
@@ -267,7 +269,7 @@ with tabs[0]:
             "Parked (Liquid)": f"₹{parked:,.2f}",
             "Unrealized P&L": f"₹{pnl:+,.2f}"
         })
-
+    
     st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True)
 
     # Automated Trigger Checks
@@ -306,15 +308,16 @@ with tabs[1]:
     st.write(f"Tranche Allocation per ETF: **₹{MONTHLY_SIP_AMOUNT / len(CORE_ETFS):,.2f}**")
     
     col_sip1, col_sip2 = st.columns([2, 1])
+    
     with col_sip1:
         sim_date = st.date_input("Simulation Date", value=date.today())
         is_15th = sim_date.day == SIP_EXECUTION_DAY
-
+        
         if is_15th:
             st.success(f"🎯 Today is the **15th** of the month! SIP execution is ready.")
         else:
             st.info(f"Selected date is the **{sim_date.day}th**. You can manually force-execute the 15th SIP below.")
-
+            
         if st.button("🚀 Execute Monthly ₹3.00 Lakh SIP Tranche"):
             success = execute_sip_tranche(str(sim_date))
             if success:
@@ -334,10 +337,10 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Annual / Periodic Equal-Weight Rebalancing")
     st.caption("Rebalances the portfolio back to 12.5% per ETF without human guesswork.")
-
+    
     target_per_etf = total_nav * TARGET_WEIGHT_PER_ETF
     st.write(f"Target Value per Asset (12.5% of NAV): **₹{target_per_etf:,.2f}**")
-
+    
     rebalance_plan = []
     for sym, info in CORE_ETFS.items():
         ltp = market_data[sym]["ltp"]
@@ -346,7 +349,7 @@ with tabs[2]:
         current_asset_val = (pos["units"] * ltp) + parked
         diff = target_per_etf - current_asset_val
         diff_pct = ((current_asset_val - target_per_etf) / target_per_etf) * 100.0
-
+        
         rebalance_plan.append({
             "ETF": sym,
             "Current Total Value": round(current_asset_val, 2),
@@ -355,10 +358,10 @@ with tabs[2]:
             "Drift (%)": f"{diff_pct:+.2f}%",
             "Recommended Action": f"BUY ₹{diff:,.2f}" if diff > 5000 else (f"TRIM ₹{-diff:,.2f}" if diff < -5000 else "BALANCED")
         })
-
+        
     rebalance_df = pd.DataFrame(rebalance_plan)
     st.dataframe(rebalance_df, use_container_width=True)
-
+    
     if st.button("⚖️ Execute Automatic Rebalancing Alignment"):
         for row in rebalance_plan:
             sym = row["ETF"]
@@ -366,7 +369,7 @@ with tabs[2]:
             ltp = market_data[sym]["ltp"]
             if ltp <= 0:
                 continue
-
+            
             # If underweight, add from unallocated cash if available
             if diff > 5000 and st.session_state.cash_balance >= diff:
                 units = int(diff // ltp)
@@ -378,7 +381,6 @@ with tabs[2]:
                     pos["units"] = tot
                     st.session_state.cash_balance -= actual
                     record_trade("REBALANCE_BUY", sym, units, ltp, actual, "Rebalance target alignment")
-
             # If overweight, trim excess
             elif diff < -5000:
                 trim_val = -diff
@@ -389,7 +391,7 @@ with tabs[2]:
                     pos["units"] -= units_to_trim
                     st.session_state.cash_balance += proceeds
                     record_trade("REBALANCE_TRIM", sym, units_to_trim, ltp, proceeds, "Trimming overweight back to 12.5%")
-
+                    
         save_state()
         st.success("✅ Portfolio successfully rebalanced to target weights!")
         st.rerun()
@@ -407,9 +409,6 @@ with tabs[3]:
 # ------------------------------------------------------------------------------
 # TAB 5: ADMIN & CAPITAL INFUSIONS
 # ------------------------------------------------------------------------------
-# ------------------------------------------------------------------------------
-# TAB 5: ADMIN & CAPITAL INFUSIONS
-# ------------------------------------------------------------------------------
 with tabs[4]:
     st.subheader("⚙️ Portfolio Administration")
     
@@ -417,8 +416,8 @@ with tabs[4]:
     
     with col_inf1:
         st.markdown("#### 💰 Inject Capital (e.g., ₹50 Lakhs in Year 3/4)")
-        infusion_amount = st.number_input("Infusion Amount (₹)", min_value=10000.0, step=100000.0, value=5000000.0)
-        if st.button("Inject Fresh Capital"):
+        infusion_amount = st.number_input("Infusion Amount (₹)", min_value=10000.0, step=100000.0, value=5000000.0, key="input_infusion")
+        if st.button("Inject Fresh Capital", key="btn_inject_capital"):
             st.session_state.cash_balance += infusion_amount
             st.session_state.total_infused += infusion_amount
             record_trade("CAPITAL_INFUSION", "CASH", 0, 1.0, infusion_amount, "Fresh milestone injection")
@@ -428,16 +427,8 @@ with tabs[4]:
 
         st.markdown("---")
         st.markdown("#### 🐝 Manual Cash Sweep to LIQUIDBEES")
-
-        sweep_amount = st.number_input(
-            "Amount to park in LIQUIDBEES (₹):",
-            min_value=0.0,
-            max_value=float(st.session_state.cash_balance),
-            value=float(st.session_state.cash_balance),
-            step=1000.0
-        )
-
-        if st.button("🚀 Park Cash in LIQUIDBEES"):
+        sweep_amount = st.number_input("Amount to park in LIQUIDBEES (₹):", min_value=0.0, max_value=float(st.session_state.cash_balance), value=float(st.session_state.cash_balance), step=1000.0, key="input_sweep")
+        if st.button("🚀 Park Cash in LIQUIDBEES", key="btn_park_liquidbees"):
             if sweep_amount > 0:
                 st.session_state.cash_balance -= sweep_amount
                 st.session_state.parked_capital["LIQUIDBEES.NS"] = st.session_state.parked_capital.get("LIQUIDBEES.NS", 0.0) + sweep_amount
@@ -448,22 +439,7 @@ with tabs[4]:
 
     with col_inf2:
         st.markdown("#### ⚠️ Reset State")
-        if st.button("🔴 Reset Portfolio to Factory ₹30L State"):
-            if os.path.exists(DATA_FILE):
-                os.remove(DATA_FILE)
-            st.session_state.clear()
-            st.rerun()
-        if st.button("Inject Fresh Capital"):
-            st.session_state.cash_balance += infusion_amount
-            st.session_state.total_infused += infusion_amount
-            record_trade("CAPITAL_INFUSION", "CASH", 0, 1.0, infusion_amount, "Fresh milestone injection")
-            save_state()
-            st.success(f"✅ Successfully added ₹{infusion_amount:,.2f} to unallocated cash balance!")
-            st.rerun()
-
-    with col_inf2:
-        st.markdown("#### ⚠️ Reset State")
-        if st.button("🔴 Reset Portfolio to Factory ₹30L State"):
+        if st.button("🔴 Reset Portfolio to Factory ₹30L State", key="btn_reset_factory"):
             if os.path.exists(DATA_FILE):
                 os.remove(DATA_FILE)
             st.session_state.clear()

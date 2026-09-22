@@ -407,42 +407,52 @@ with tabs[3]:
 # ------------------------------------------------------------------------------
 # TAB 5: ADMIN & CAPITAL INFUSIONS
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# TAB 5: ADMIN & CAPITAL INFUSIONS
+# ------------------------------------------------------------------------------
 with tabs[4]:
     st.subheader("⚙️ Portfolio Administration")
     
     col_inf1, col_inf2 = st.columns(2)
+    
     with col_inf1:
-        st.markdown("#### 💰 Inject Capital (e.g., ₹50 Lakhs in Year 3/4)")import streamlit as st
-
-# Ensure session state variables for portfolio metrics are initialized
-if "unallocated_cash" not in st.session_state:
-    st.session_state.unallocated_cash = 2701439.73
-if "parked_liquidbees" not in st.session_state:
-    st.session_state.parked_liquidbees = 75000.00
-
-st.subheader("🐝 Manual Cash Sweep to LIQUIDBEES")
-
-# Allow user to specify amount or sweep all unused cash
-sweep_amount = st.number_input(
-    "Amount to park in LIQUIDBEES (₹):",
-    min_value=0.0,
-    max_value=float(st.session_state.unallocated_cash),
-    value=float(st.session_state.unallocated_cash),
-    step=1000.0,
-)
-
-if st.button("🚀 Park Cash in LIQUIDBEES"):
-    if sweep_amount > 0:
-        # Deduct from cash and add to LIQUIDBEES
-        st.session_state.unallocated_cash -= sweep_amount
-        st.session_state.parked_liquidbees += sweep_amount
-        st.success(
-            f"Successfully transferred ₹{sweep_amount:,.2f} to LIQUIDBEES!"
-        )
-        st.rerun()
-    else:
-        st.warning("Please enter an amount greater than 0.")
+        st.markdown("#### 💰 Inject Capital (e.g., ₹50 Lakhs in Year 3/4)")
         infusion_amount = st.number_input("Infusion Amount (₹)", min_value=10000.0, step=100000.0, value=5000000.0)
+        if st.button("Inject Fresh Capital"):
+            st.session_state.cash_balance += infusion_amount
+            st.session_state.total_infused += infusion_amount
+            record_trade("CAPITAL_INFUSION", "CASH", 0, 1.0, infusion_amount, "Fresh milestone injection")
+            save_state()
+            st.success(f"✅ Successfully added ₹{infusion_amount:,.2f} to unallocated cash balance!")
+            st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### 🐝 Manual Cash Sweep to LIQUIDBEES")
+
+        sweep_amount = st.number_input(
+            "Amount to park in LIQUIDBEES (₹):",
+            min_value=0.0,
+            max_value=float(st.session_state.cash_balance),
+            value=float(st.session_state.cash_balance),
+            step=1000.0
+        )
+
+        if st.button("🚀 Park Cash in LIQUIDBEES"):
+            if sweep_amount > 0:
+                st.session_state.cash_balance -= sweep_amount
+                st.session_state.parked_capital["LIQUIDBEES.NS"] = st.session_state.parked_capital.get("LIQUIDBEES.NS", 0.0) + sweep_amount
+                record_trade("MANUAL_SWEEP", "LIQUIDBEES.NS", int(sweep_amount // 1000), 1000.0, sweep_amount, "Manual cash sweep")
+                save_state()
+                st.success(f"✅ Successfully parked ₹{sweep_amount:,.2f} into LIQUIDBEES!")
+                st.rerun()
+
+    with col_inf2:
+        st.markdown("#### ⚠️ Reset State")
+        if st.button("🔴 Reset Portfolio to Factory ₹30L State"):
+            if os.path.exists(DATA_FILE):
+                os.remove(DATA_FILE)
+            st.session_state.clear()
+            st.rerun()
         if st.button("Inject Fresh Capital"):
             st.session_state.cash_balance += infusion_amount
             st.session_state.total_infused += infusion_amount

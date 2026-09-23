@@ -23,9 +23,7 @@ LIQUID_ETF = "LIQUIDBEES.NS"
 INITIAL_CAPITAL = 3000000.00  # ₹3,000,000 Starting NAV
 SPREADSHEET_NAME = "ETF_Trading_Ledger"
 
-
-# --- 2. GOOGLE SHEETS AUTHENTICATION & KEY SANITIZATION ---
-def get_gspread_client():
+ def get_gspread_client():
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
@@ -36,20 +34,43 @@ def get_gspread_client():
         creds_dict = dict(st.secrets["gcp_service_account"])
 
         if "private_key" in creds_dict:
-            # Unescape backslashes
-            key = creds_dict["private_key"].replace("\\n", "\n")
+            # Reconstruct and clean private key without breaking base64 padding
+            key = creds_dict["private_key"]
+            if "\\n" in key:
+                key = key.replace("\\n", "\n")
 
-            # Fix base64 padding issues for PEM/RSA decoders
-            lines = key.split("\n")
-            cleaned_lines = []
-            for line in lines:
-                if "BEGIN PRIVATE KEY" in line or "END PRIVATE KEY" in line:
-                    cleaned_lines.append(line)
-                else:
-                    stripped = line.strip()
-                    if stripped:
-                        pad = len(stripped) % 4
-                        if pad != 0:
+            # Clean outer quotes if present
+            key = key.strip("'\"")
+            creds_dict["private_key"] = key
+
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    # 2. Read from Environment Variable (GitHub Actions)
+    creds_json = os.environ.get("GSPREAD_CREDS")
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace(
+                "\\n", "\n"
+            )
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    # 3. Local fallback
+    if os.path.exists("service_account.json"):
+        with open("service_account.json") as f:
+            creds_dict = json.load(f)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    raise FileNotFoundError("No Google Cloud credentials found.")
                             stripped += "=" * (4 - pad)
                         cleaned_lines.append(stripped)
 

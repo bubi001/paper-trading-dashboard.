@@ -1,4 +1,6 @@
 streamlit
-yfinance
+gspread
+oauth2client
 pandas
-plotly
+numpy
+yfinance

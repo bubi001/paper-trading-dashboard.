@@ -109,7 +109,7 @@ def run_daily_cron():
 
     # Connect to Google Sheet Ledger
     gc = get_gspread_client()
-    sheet = gc.open(SPREADSHEET_NAME).sheet1
+     sheet = gc.open_by_key(SHEET_ID).sheet1
     all_records = sheet.get_all_records()
 
     if len(all_records) > 0:

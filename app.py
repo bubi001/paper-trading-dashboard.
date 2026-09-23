@@ -4,6 +4,7 @@ import os
 import gspread
 import numpy as np
 import pandas as pd
+import streamlit as st
 import yfinance as yf
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -18,12 +19,12 @@ ETF_UNIVERSE = [
     "GOLDBEES.NS",
     "MON100.NS",
 ]
-
 LIQUID_ETF = "LIQUIDBEES.NS"
-INITIAL_CAPITAL = 3000000.00  # ₹30,000,000 Starting NAV
+INITIAL_CAPITAL = 3000000.00  # ₹3,000,000 Starting NAV
 SPREADSHEET_NAME = "ETF_Trading_Ledger"
 
 
+# --- 2. GOOGLE SHEETS AUTHENTICATION ---
 def get_gspread_client():
     scope = [
         "https://spreadsheets.google.com/feeds",
@@ -33,13 +34,10 @@ def get_gspread_client():
     # 1. Read from Streamlit Cloud Secrets
     if "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
-
-        # Fix RSA Private Key formatting for base64 / PEM decoder
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace(
                 "\\n", "\n"
             )
-
         creds = ServiceAccountCredentials.from_json_keyfile_dict(
             creds_dict, scope
         )
@@ -53,27 +51,6 @@ def get_gspread_client():
             creds_dict["private_key"] = creds_dict["private_key"].replace(
                 "\\n", "\n"
             )
-
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(
-            creds_dict, scope
-        )
-        return gspread.authorize(creds)
-
-    # 3. Local fallback
-    if os.path.exists("service_account.json"):
-        with open("service_account.json") as f:
-            creds_dict = json.load(f)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(
-            creds_dict, scope
-        )
-        return gspread.authorize(creds)
-
-    raise FileNotFoundError("No Google Cloud credentials found.")
-
-    # 2. Read from GitHub Actions Environment Variable
-    creds_json = os.environ.get("GSPREAD_CREDS")
-    if creds_json:
-        creds_dict = json.loads(creds_json)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(
             creds_dict, scope
         )
@@ -94,14 +71,14 @@ def get_gspread_client():
 # --- 3. CORE STRATEGY & PNL ENGINE ---
 def run_daily_cron():
     today_str = datetime.date.today().strftime("%Y-%m-%d")
-    print(f"[{today_str}] Running Daily 8-ETF Strategy Cron Engine...")
 
     # Fetch 1 year of historical daily closing prices
     all_tickers = ETF_UNIVERSE + [LIQUID_ETF]
     df_prices = yf.download(all_tickers, period="1y")["Close"]
 
     if df_prices.empty:
-        raise ValueError("Failed to download price data from Yahoo Finance.")
+        st.error("Failed to download price data from Yahoo Finance.")
+        return
 
     # Calculate 200-Day Moving Averages
     df_sma200 = df_prices.rolling(window=200).mean()
@@ -109,7 +86,7 @@ def run_daily_cron():
     latest_prices = df_prices.iloc[-1]
     latest_sma200 = df_sma200.iloc[-1]
 
-    # Evaluate 200-DMA Breaches (Price < 200-SMA by >2%)
+    # Evaluate 200-DMA Breaches
     breached_etfs = []
     healthy_etfs = []
 
@@ -128,8 +105,7 @@ def run_daily_cron():
         else:
             healthy_etfs.append(etf)
 
-    # Calculate Portfolio NAV & Allocations
-    # (Integrates with initial capital base or reads last known NAV from sheet)
+    # Connect to Google Sheet Ledger
     gc = get_gspread_client()
     sheet = gc.open(SPREADSHEET_NAME).sheet1
     all_records = sheet.get_all_records()
@@ -140,7 +116,7 @@ def run_daily_cron():
     else:
         prev_nav = INITIAL_CAPITAL
 
-    # Example Daily NAV return calculation based on active assets
+    # Daily NAV return calculation based on active assets
     daily_market_return = (
         df_prices[ETF_UNIVERSE].pct_change().iloc[-1].mean()
     )
@@ -153,7 +129,6 @@ def run_daily_cron():
 
     # Determine allocation splits based on breached circuit breakers
     if len(breached_etfs) > 0:
-        # Move portion of breached ETFs into LIQUIDBEES
         cash_ratio = len(breached_etfs) / len(ETF_UNIVERSE)
         liquidbees_cash = current_nav * cash_ratio
         equities_deployed = current_nav - liquidbees_cash
@@ -165,10 +140,9 @@ def run_daily_cron():
             "All 8 ETFs holding above 200-DMA threshold. 100% Deployed."
         )
 
-    # Current month calculation
     current_month = datetime.date.today().month
 
-    # --- 4. APPEND ROW TO GOOGLE SHEETS ---
+    # Append Row to Google Sheet
     new_ledger_entry = [
         today_str,
         round(current_nav, 2),
@@ -181,10 +155,36 @@ def run_daily_cron():
     ]
 
     sheet.append_row(new_ledger_entry)
-    print(
-        f"[{today_str}] Successfully appended entry. Total NAV: ₹{current_nav:,.2f}"
-    )
 
 
-if __name__ == "__main__":
-    run_daily_cron()
+# --- 4. STREAMLIT UI DASHBOARD ---
+st.set_page_config(
+    page_title="8-ETF Paper Trading Terminal", layout="wide"
+)
+
+st.title("📊 8-ETF Institutional Paper Trading Terminal")
+
+# Load and Display Google Sheets Ledger
+try:
+    gc = get_gspread_client()
+    sheet = gc.open(SPREADSHEET_NAME).sheet1
+    records = sheet.get_all_records()
+    df_ledger = pd.DataFrame(records)
+
+    if not df_ledger.empty:
+        latest = df_ledger.iloc[-1]
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total NAV", f"₹{latest.get('Total NAV', 0):,}")
+        col2.metric("Daily P&L", f"₹{latest.get('Daily PnL', 0):,}")
+        col3.metric(
+            "Equities Deployed", f"₹{latest.get('Equities Deployed', 0):,}"
+        )
+        col4.metric("LIQUIDBEES Cash", f"₹{latest.get('LIQUIDBEES Cash', 0):,}")
+
+        st.divider()
+        st.subheader("Execution Ledger")
+        st.dataframe(df_ledger, use_container_width=True)
+    else:
+        st.info("Trading ledger is empty.")
+except Exception as e:
+    st.error(f"Error loading Google Sheets ledger: {e}")

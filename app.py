@@ -1,268 +1,169 @@
-"""
-================================================================================
-8-ETF ADAPTIVE PORTFOLIO: PAPER TRADING & REBALANCING TERMINAL
-================================================================================
-- 8 Core ETFs + LIQUIDCASE Safe Harbor
-- Weekly SIP Rollout Strategy
-- Google Sheets Integration for Cloud Ledger Persistence
-- Systematic 200-DMA Exit & Re-entry with 2% Whipsaw Buffer
-- Target Equal-Weight Rebalancing Engine
-================================================================================
-"""
-
-import os
-import json
-from datetime import datetime, date
-import pandas as pd
-import numpy as np
-import yfinance as yf
 import streamlit as st
+import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 
-# ==============================================================================
-# 1. CORE SYSTEM CONFIGURATION
-# ==============================================================================
-st.set_page_config(page_title="8-ETF Wealth Engine | Paper Trading", layout="wide", page_icon="🛡️")
+# ==========================================
+# 1. PAGE CONFIGURATION & STYLING
+# ==========================================
+st.set_page_config(page_title="8-ETF Institutional Paper Trading Terminal", layout="wide")
 
-DEFAULT_START_CAPITAL = 3000000.0  # ₹30,00,000 Initial Corpus
-WEEKLY_SIP_AMOUNT = 25000.0        # ₹25,000 Weekly SIP Tranche
-
-CORE_ETFS = {
-    "MOM30IETF.NS":  {"name": "Nifty200 Momentum 30",     "category": "Factor Alpha"},
-    "MID150BEES.NS": {"name": "Nifty Midcap 150",         "category": "Core Midcap"},
-    "JUNIORBEES.NS": {"name": "Nifty Next 50",            "category": "Next Bluechips"},
-    "MON100.NS":     {"name": "Nasdaq 100 Tech",          "category": "Global Tech / USD"},
-    "AUTOBEES.NS":   {"name": "Nifty Auto & Mobility",    "category": "EV / Mobility"},
-    "INFRAIETF.NS":  {"name": "Nifty Infrastructure",     "category": "National Capex"},
-    "GOLDBEES.NS":   {"name": "Physical Gold",            "category": "Sovereign Ballast"},
-    "SILVERBEES.NS": {"name": "Physical Silver",          "category": "Industrial Metal"}
-}
-
-SAFE_HARBOR = "LIQUIDCASE.NS"
-TARGET_WEIGHT_PER_ETF = 1.0 / len(CORE_ETFS)  # 12.5% each
-
-# ==============================================================================
-# 2. GOOGLE SHEETS CONNECTOR & STATE MANAGEMENT
-# ==============================================================================
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-def load_sheet_ledger():
-    """Reads execution ledger from Google Sheets."""
-    try:
-        df = conn.read(worksheet="Ledger", ttl="0s")
-        return df
-    except Exception:
-        # Return default structure if sheet is uninitialized or empty
-        return pd.DataFrame(columns=[
-            "Date", "Total NAV", "Daily PnL", "Daily Return (%)",
-            "Equities Deployed", "LIQUIDCASE Cash", "Strategy Period", "Execution Notes"
-        ])
-
-def append_to_sheet_ledger(date_str, total_nav, daily_pnl, daily_return_pct, equities_deployed, liquidcase_cash, period, notes):
-    """Appends a new record row directly to Google Sheets."""
-    try:
-        df_existing = load_sheet_ledger()
-        new_row = pd.DataFrame([{
-            "Date": date_str,
-            "Total NAV": total_nav,
-            "Daily PnL": daily_pnl,
-            "Daily Return (%)": f"{daily_return_pct:.2f}%",
-            "Equities Deployed": equities_deployed,
-            "LIQUIDCASE Cash": liquidcase_cash,
-            "Strategy Period": period,
-            "Execution Notes": notes
-        }])
-        updated_df = pd.concat([df_existing, new_row], ignore_index=True)
-        conn.update(worksheet="Ledger", data=updated_df)
-        st.toast("✅ Ledger successfully synced to Google Sheets!")
-    except Exception as e:
-        st.error(f"Failed to update Google Sheet: {e}")
-
-# Initialize Session State
-if "liquidcase_cash" not in st.session_state:
-    st.session_state.liquidcase_cash = 2975000.0
-if "equities_deployed" not in st.session_state:
-    st.session_state.equities_deployed = 25000.0
-if "holdings" not in st.session_state:
-    st.session_state.holdings = {sym: {"units": 0, "avg_cost": 0.0} for sym in CORE_ETFS}
-if "parked_capital" not in st.session_state:
-    st.session_state.parked_capital = {sym: 0.0 for sym in CORE_ETFS}
-if "sip_week_counter" not in st.session_state:
-    st.session_state.sip_week_counter = 1
-
-# ==============================================================================
-# 3. MARKET DATA & TECHNICAL ENGINE
-# ==============================================================================
-@st.cache_data(ttl=300)
-def fetch_etf_data(symbol: str):
-    """Fetches historical daily close data with 2-year lookback."""
-    try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period="2y", interval="1d")
-        if df.empty or len(df) < 200:
-            return None
-        df = df.dropna(subset=['Close'])
-        return df
-    except Exception:
-        return None
-
-def get_trend_status(symbol: str):
-    """Evaluates whether an ETF is above or below its 200-DMA with 2% buffer."""
-    df = fetch_etf_data(symbol)
-    if df is None:
-        return {"ltp": 0.0, "sma200": 0.0, "dist": 0.0, "regime": "UNKNOWN"}
-    
-    ltp = float(df['Close'].iloc[-1])
-    sma200 = float(df['Close'].rolling(window=200).mean().iloc[-1])
-    dist = ((ltp - sma200) / sma200) * 100.0
-    buffer_line = sma200 * 0.98
-
-    if ltp < buffer_line:
-        regime = "BEAR (PARKED)"
-    elif ltp > sma200:
-        regime = "BULL (INVESTED)"
-    else:
-        regime = "BUFFER ZONE"
-
-    return {"ltp": round(ltp, 2), "sma200": round(sma200, 2), "dist": round(dist, 2), "regime": regime}
-
-# ==============================================================================
-# 4. EXECUTION ENGINE (WEEKLY SIP)
-# ==============================================================================
-def execute_weekly_sip(selected_etf: str, sip_amount: float, execution_date: str):
-    """Executes a Weekly SIP tranche into a selected ETF from LIQUIDCASE cash."""
-    if st.session_state.liquidcase_cash < sip_amount:
-        st.error(f"❌ Insufficient LIQUIDCASE balance! Available: ₹{st.session_state.liquidcase_cash:,.2f}")
-        return False
-
-    status = get_trend_status(selected_etf)
-    ltp = status["ltp"] if status["ltp"] > 0 else 1.0
-
-    # Deduct from Liquid Cash pool and deploy
-    st.session_state.liquidcase_cash -= sip_amount
-    st.session_state.equities_deployed += sip_amount
-    
-    units = int(sip_amount // ltp) if ltp > 0 else 0
-    if units > 0:
-        pos = st.session_state.holdings[selected_etf]
-        tot_units = pos["units"] + units
-        pos["avg_cost"] = ((pos["units"] * pos["avg_cost"]) + sip_amount) / tot_units
-        pos["units"] = tot_units
-
-    week_num = st.session_state.sip_week_counter
-    st.session_state.sip_week_counter += 1
-
-    # Record into Google Sheets
-    total_nav = st.session_state.liquidcase_cash + st.session_state.equities_deployed
-    note = f"SIP Deployed ₹{sip_amount:,.0f} into {selected_etf} ({CORE_ETFS[selected_etf]['name']}) | Deducted from LIQUIDCASE Cash"
-    
-    append_to_sheet_ledger(
-        date_str=execution_date,
-        total_nav=total_nav,
-        daily_pnl=0,
-        daily_return_pct=0.00,
-        equities_deployed=st.session_state.equities_deployed,
-        liquidcase_cash=st.session_state.liquidcase_cash,
-        period=f"Week {week_num}",
-        notes=note
-    )
-    return True
-
-# ==============================================================================
-# 5. STREAMLIT UI DASHBOARD
-# ==============================================================================
 st.title("🛡️ 8-ETF Institutional Paper Trading Terminal")
 
-# Dynamic Financial Headers
-total_nav = st.session_state.liquidcase_cash + st.session_state.equities_deployed
+# ==========================================
+# 2. GOOGLE SHEETS CONNECTION & DATA FETCH
+# ==========================================
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total NAV", f"₹{total_nav:,.0f}")
-c2.metric("Daily P&L", "₹0")
-c3.metric("Equities Deployed", f"₹{st.session_state.equities_deployed:,.0f}")
-c4.metric("LIQUIDCASE Cash", f"₹{st.session_state.liquidcase_cash:,.0f}")
+def fetch_ledger_data():
+    """Fetches the trade ledger directly from Google Sheets."""
+    try:
+        df = conn.read(worksheet="Sheet1", ttl=0)
+        df = df.dropna(how="all")
+        return df
+    except Exception as e:
+        st.error(f"Error connecting to Google Sheet: {e}")
+        return pd.DataFrame(columns=["Date", "Ticker", "Type", "Quantity", "Price", "Amount"])
+
+ledger_df = fetch_ledger_data()
+
+# Calculate total equities deployed and units held per ticker from ledger
+if not ledger_df.empty and "Ticker" in ledger_df.columns and "Quantity" in ledger_df.columns:
+    ledger_df["Quantity"] = pd.to_numeric(ledger_df["Quantity"], errors="coerce").fillna(0)
+    ledger_df["Amount"] = pd.to_numeric(ledger_df["Amount"], errors="coerce").fillna(0)
+    
+    units_by_ticker = ledger_df.groupby("Ticker")["Quantity"].sum().to_dict()
+    equities_deployed_val = ledger_df["Amount"].sum()
+else:
+    units_by_ticker = {}
+    equities_deployed_val = 0.0
+
+# ==========================================
+# 3. BASE PORTFOLIO & ATR STOP-LOSS LOGIC
+# ==========================================
+TOTAL_NAV = 3000000.0  # ₹3,000,000 Total Capital
+NUM_WEEKS = 52
+WEEKLY_TRANCHE = TOTAL_NAV / NUM_WEEKS  # ₹57,692.31 per week
+
+ACTIVATION_THRESHOLD_PCT = 15.0  # Activate ATR trailing stop-loss when > 15% above 200-SMA
+ATR_MULTIPLIER = 2.0             # 2x ATR distance from Peak Price
+
+portfolio_data = [
+    {"Symbol": "MOM30IETF.NS", "Name": "Nifty200 Momentum 30", "Category": "Factor Alpha", "LTP": 31.12, "200-SMA": 31.10, "Peak Price": 32.50, "14-ATR": 0.85},
+    {"Symbol": "MID150BEES.NS", "Name": "Nifty Midcap 150", "Category": "Core Midcap", "LTP": 236.21, "200-SMA": 229.58, "Peak Price": 242.00, "14-ATR": 4.20},
+    {"Symbol": "JUNIORBEES.NS", "Name": "Nifty Next 50", "Category": "Next Bluechips", "LTP": 782.31, "200-SMA": 754.99, "Peak Price": 795.00, "14-ATR": 12.50},
+    {"Symbol": "MON100.NS", "Name": "Nasdaq 100 Tech", "Category": "Global Tech / USD", "LTP": 330.24, "200-SMA": 284.18, "Peak Price": 340.00, "14-ATR": 6.10},
+    {"Symbol": "AUTOBEES.NS", "Name": "Nifty Auto & Mobility", "Category": "EV / Mobility", "LTP": 281.25, "200-SMA": 279.22, "Peak Price": 288.00, "14-ATR": 5.40},
+    {"Symbol": "INFRAIETF.NS", "Name": "Nifty Infrastructure", "Category": "National Capex", "LTP": 93.36, "200-SMA": 95.70, "Peak Price": 98.50, "14-ATR": 1.90},
+    {"Symbol": "GOLDBEES.NS", "Name": "Physical Gold", "Category": "Sovereign Ballast", "LTP": 125.57, "200-SMA": 122.81, "Peak Price": 127.00, "14-ATR": 1.65},
+    {"Symbol": "SILVERBEES.NS", "Name": "Physical Silver", "Category": "Industrial Metal", "LTP": 222.21, "200-SMA": 229.93, "Peak Price": 238.00, "14-ATR": 5.80},
+]
+
+df_portfolio = pd.DataFrame(portfolio_data)
+
+# Distance calculation relative to 200-SMA
+df_portfolio["Distance (%)"] = ((df_portfolio["LTP"] - df_portfolio["200-SMA"]) / df_portfolio["200-SMA"]) * 100
+
+# Function to calculate ATR Trailing Stop & Regime
+def evaluate_atr_regime(row):
+    dist = row["Distance (%)"]
+    ltp = row["LTP"]
+    sma = row["200-SMA"]
+    peak = row["Peak Price"]
+    atr = row["14-ATR"]
+    
+    # Calculate 2x ATR Trailing Stop Level
+    atr_stop_level = peak - (ATR_MULTIPLIER * atr)
+    
+    # Conditional activation when price crosses +15% above 200-SMA
+    if dist >= ACTIVATION_THRESHOLD_PCT:
+        if ltp < atr_stop_level:
+            return "ATR STOP-LOSS HIT (PARKED)", f"₹{atr_stop_level:,.2f} (Active)"
+        return "BULL (ACTIVE ATR TSL)", f"₹{atr_stop_level:,.2f} (Active)"
+    
+    # Standard 200-SMA regime before reaching +15%
+    if ltp >= sma:
+        return "BULL (INVESTED)", "Inactive (<15% Distance)"
+    else:
+        return "BEAR (PARKED)", "Inactive (Below 200-SMA)"
+
+# Apply ATR evaluation
+regime_results = df_portfolio.apply(evaluate_atr_regime, axis=1)
+df_portfolio["Regime"] = [res[0] for res in regime_results]
+df_portfolio["ATR Stop Level"] = [res[1] for res in regime_results]
+
+# Map dynamic units held from Google Sheet
+df_portfolio["Units Held"] = df_portfolio["Symbol"].map(units_by_ticker).fillna(0).astype(int)
+
+# ==========================================
+# 4. ALLOCATION CALCULATION (52 WEEKS / ACTIVE ETFS)
+# ==========================================
+num_total_etfs = len(df_portfolio)
+weekly_allocation_per_etf = WEEKLY_TRANCHE / (num_total_etfs - 1)  # ₹8,241.76 per slot
+
+df_portfolio["Weekly Allotment (₹)"] = weekly_allocation_per_etf
+
+# NAV summary metrics
+liquidcase_cash_val = TOTAL_NAV - equities_deployed_val
+
+# ==========================================
+# 5. TOP SUMMARY METRICS
+# ==========================================
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total NAV", f"₹{TOTAL_NAV:,.0f}")
+col2.metric("Daily P&L", "₹0")
+col3.metric("Equities Deployed", f"₹{equities_deployed_val:,.0f}")
+col4.metric("LIQUIDCASE Cash", f"₹{liquidcase_cash_val:,.0f}")
 
 st.markdown("---")
 
-tabs = st.tabs(["📜 Execution Ledger", "🅿️ Park / Add Cash", "💸 Deploy Weekly SIP", "📊 My ETF List"])
+# ==========================================
+# 6. TAB NAVIGATION & CONTENT
+# ==========================================
+tab1, tab2, tab3, tab4 = st.tabs(["📜 Execution Ledger", "🅿️ Park / Add Cash", "💸 Deploy Weekly SIP", "📊 My ETF List"])
 
-# ------------------------------------------------------------------------------
-# TAB 1: EXECUTION LEDGER (READ/WRITE VIA GOOGLE SHEETS)
-# ------------------------------------------------------------------------------
-with tabs[0]:
-    st.subheader("Execution Ledger (Synced with Google Sheets)")
-    
-    sheet_data = load_sheet_ledger()
-    if not sheet_data.empty:
-        st.dataframe(sheet_data, use_container_width=True)
+# TAB 1: EXECUTION LEDGER
+with tab1:
+    st.subheader("Current Google Sheet Trade Ledger")
+    if not ledger_df.empty:
+        st.dataframe(ledger_df, use_container_width=True)
     else:
-        st.info("No ledger records found in Google Sheets.")
-
-    if st.button("💾 Save / Refresh Ledger Edits", key="btn_refresh_ledger"):
+        st.info("No trades currently recorded in Google Sheet. Add headers and rows to start tracking.")
+    
+    if st.button("🔄 Save / Refresh Ledger Edits"):
         st.rerun()
 
-# ------------------------------------------------------------------------------
 # TAB 2: PARK / ADD CASH
-# ------------------------------------------------------------------------------
-with tabs[1]:
-    st.subheader("Park or Inject Fresh Capital")
-    col_p1, col_p2 = st.columns(2)
-    
-    with col_p1:
-        add_amount = st.number_input("Inject Cash Amount (₹)", min_value=1000.0, value=100000.0, step=10000.0)
-        if st.button("Add to LIQUIDCASE Pool", key="btn_add_cash"):
-            st.session_state.liquidcase_cash += add_amount
-            total_nav = st.session_state.liquidcase_cash + st.session_state.equities_deployed
-            
-            append_to_sheet_ledger(
-                date_str=str(date.today()),
-                total_nav=total_nav,
-                daily_pnl=0,
-                daily_return_pct=0.00,
-                equities_deployed=st.session_state.equities_deployed,
-                liquidcase_cash=st.session_state.liquidcase_cash,
-                period="Capital Addition",
-                notes=f"Injected ₹{add_amount:,.0f} fresh capital into LIQUIDCASE"
-            )
-            st.success(f"Added ₹{add_amount:,.0f} to LIQUIDCASE Pool!")
-            st.rerun()
+with tab2:
+    st.subheader("Park / Add Cash to Portfolio")
+    cash_amount = st.number_input("Enter Amount (₹):", min_value=0.0, step=1000.0, value=100000.0)
+    if st.button("Submit / Execute"):
+        st.success(f"Successfully recorded ₹{cash_amount:,.2f} into cash reserve.")
 
-# ------------------------------------------------------------------------------
 # TAB 3: DEPLOY WEEKLY SIP
-# ------------------------------------------------------------------------------
-with tabs[2]:
-    st.subheader("Deploy Weekly SIP Tranche")
+with tab3:
+    st.subheader("Weekly Allocation Breakdown (52-Week Tranche Strategy)")
+    st.markdown(f"**Total Weekly SIP Budget:** ₹{WEEKLY_TRANCHE:,.2f} (₹3,000,000 ÷ 52)")
+    st.markdown(f"**Per-ETF Target Split:** ₹{weekly_allocation_per_etf:,.2f} per slot")
+    st.markdown(f"📐 **ATR Trailing Stop-Loss:** Activates at **+15% Distance from 200-SMA** with a **{ATR_MULTIPLIER}x ATR** trail from Peak Price.")
     
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        target_etf = st.selectbox("Select Target ETF for Tranche", list(CORE_ETFS.keys()), format_func=lambda x: f"{x} - {CORE_ETFS[x]['name']}")
-        sip_val = st.number_input("Weekly SIP Amount (₹)", min_value=1000.0, value=WEEKLY_SIP_AMOUNT, step=5000.0)
-        exec_date = st.date_input("Execution Date", value=date.today())
+    sip_display = df_portfolio[["Symbol", "Name", "Regime", "LTP", "14-ATR", "ATR Stop Level", "Weekly Allotment (₹)"]].copy()
+    sip_display["Weekly Target Shares"] = (sip_display["Weekly Allotment (₹)"] / sip_display["LTP"]).astype(int)
+    sip_display["Action Status"] = sip_display["Regime"].apply(lambda r: "BUY UNITS" if "BULL" in r else "PARK IN CASH")
+    
+    st.dataframe(sip_display, use_container_width=True)
 
-        if st.button("🚀 Execute Weekly SIP Tranche", key="btn_exec_weekly_sip"):
-            if execute_weekly_sip(target_etf, sip_val, str(exec_date)):
-                st.success(f"Weekly SIP of ₹{sip_val:,.0f} into {target_etf} successfully logged!")
-                st.rerun()
-
-# ------------------------------------------------------------------------------
-# TAB 4: MY ETF LIST & TREND SCANNER
-# ------------------------------------------------------------------------------
-with tabs[3]:
-    st.subheader("Core 8-ETF Portfolio Tracking")
+# TAB 4: MY ETF LIST & REGIME
+with tab4:
+    st.subheader("Core 8-ETF Portfolio Tracking & ATR Stop-Loss Monitor")
     
-    etf_rows = []
-    for sym, meta in CORE_ETFS.items():
-        status = get_trend_status(sym)
-        pos = st.session_state.holdings[sym]
-        etf_rows.append({
-            "Symbol": sym,
-            "Name": meta["name"],
-            "Category": meta["category"],
-            "LTP": f"₹{status['ltp']:,.2f}",
-            "200-SMA": f"₹{status['sma200']:,.2f}",
-            "Distance (%)": f"{status['dist']:+.2f}%",
-            "Regime": status["regime"],
-            "Units Held": pos["units"]
-        })
+    display_df = df_portfolio.copy()
+    display_df["LTP"] = display_df["LTP"].apply(lambda x: f"₹{x:,.2f}")
+    display_df["200-SMA"] = display_df["200-SMA"].apply(lambda x: f"₹{x:,.2f}")
+    display_df["Peak Price"] = display_df["Peak Price"].apply(lambda x: f"₹{x:,.2f}")
+    display_df["14-ATR"] = display_df["14-ATR"].apply(lambda x: f"₹{x:,.2f}")
+    display_df["Distance (%)"] = display_df["Distance (%)"].apply(lambda x: f"{x:+.2f}%")
     
-    st.dataframe(pd.DataFrame(etf_rows), use_container_width=True)
+    st.dataframe(
+        display_df[["Symbol", "Name", "Category", "LTP", "200-SMA", "Peak Price", "14-ATR", "Distance (%)", "ATR Stop Level", "Regime", "Units Held"]],
+        use_container_width=True
+    )

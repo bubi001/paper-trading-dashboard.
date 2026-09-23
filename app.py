@@ -22,6 +22,7 @@ ETF_UNIVERSE = [
 LIQUID_ETF = "LIQUIDBEES.NS"
 INITIAL_CAPITAL = 3000000.00  # ₹3,000,000 Starting NAV
 SPREADSHEET_NAME = "ETF_Trading_Ledger"
+SHEET_ID = "19j4tv6fttY6CT6TjchrZrx-hFzGxCC3g8bVnZ8zLhNg"
 
 
 # --- 2. GOOGLE SHEETS AUTHENTICATION ---
@@ -109,7 +110,7 @@ def run_daily_cron():
 
     # Connect to Google Sheet Ledger
     gc = get_gspread_client()
-   sheet = gc.open_by_key(SHEET_ID).sheet1
+    sheet = gc.open_by_key(SHEET_ID).sheet1
     all_records = sheet.get_all_records()
 
     if len(all_records) > 0:
@@ -169,7 +170,7 @@ st.title("📊 8-ETF Institutional Paper Trading Terminal")
 # Load and Display Google Sheets Ledger
 try:
     gc = get_gspread_client()
-    sheet = gc.open(SPREADSHEET_NAME).sheet1
+    sheet = gc.open_by_key(SHEET_ID).sheet1
     records = sheet.get_all_records()
     df_ledger = pd.DataFrame(records)
 

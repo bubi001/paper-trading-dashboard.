@@ -24,22 +24,46 @@ INITIAL_CAPITAL = 3000000.00  # ₹30,000,000 Starting NAV
 SPREADSHEET_NAME = "ETF_Trading_Ledger"
 
 
-# --- 2. GOOGLE SHEETS AUTHENTICATION ---
-def get_gspread_client():
-    creds_json = os.environ.get("GSPREAD_CREDS")
-    if creds_json:
-        creds_dict = json.loads(creds_json)
-    else:
-        # Local fallback if testing on machine
-        with open("service_account.json") as f:
-            creds_dict = json.load(f)
+import json
+import os
+import gspread
+import streamlit as st
+from oauth2client.service_account import ServiceAccountCredentials
 
+
+def get_gspread_client():
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    return gspread.authorize(creds)
+
+    # 1. Read from Streamlit Cloud Secrets
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    # 2. Read from GitHub Actions Environment Variable
+    creds_json = os.environ.get("GSPREAD_CREDS")
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    # 3. Local fallback
+    if os.path.exists("service_account.json"):
+        with open("service_account.json") as f:
+            creds_dict = json.load(f)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    raise FileNotFoundError("No Google Cloud credentials found.")
 
 
 # --- 3. CORE STRATEGY & PNL ENGINE ---

@@ -24,13 +24,6 @@ INITIAL_CAPITAL = 3000000.00  # ₹30,000,000 Starting NAV
 SPREADSHEET_NAME = "ETF_Trading_Ledger"
 
 
-import json
-import os
-import gspread
-import streamlit as st
-from oauth2client.service_account import ServiceAccountCredentials
-
-
 def get_gspread_client():
     scope = [
         "https://spreadsheets.google.com/feeds",
@@ -40,10 +33,42 @@ def get_gspread_client():
     # 1. Read from Streamlit Cloud Secrets
     if "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
+
+        # Fix RSA Private Key formatting for base64 / PEM decoder
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace(
+                "\\n", "\n"
+            )
+
         creds = ServiceAccountCredentials.from_json_keyfile_dict(
             creds_dict, scope
         )
         return gspread.authorize(creds)
+
+    # 2. Read from GitHub Actions Environment Variable
+    creds_json = os.environ.get("GSPREAD_CREDS")
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace(
+                "\\n", "\n"
+            )
+
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    # 3. Local fallback
+    if os.path.exists("service_account.json"):
+        with open("service_account.json") as f:
+            creds_dict = json.load(f)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+        return gspread.authorize(creds)
+
+    raise FileNotFoundError("No Google Cloud credentials found.")
 
     # 2. Read from GitHub Actions Environment Variable
     creds_json = os.environ.get("GSPREAD_CREDS")

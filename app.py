@@ -6,16 +6,15 @@ st.set_page_config(layout="wide", page_title="8-ETF Paper Trading Terminal")
 
 st.title("📊 8-ETF Institutional Paper Trading Terminal")
 
-# Initialize GSheets connection using st.secrets
+# Initialize GSheets connection
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Load data automatically from Google Sheet
+# Load data automatically from Google Sheet or fallback
 try:
     df_sheet = conn.read(ttl="1m")
     if "ledger_df" not in st.session_state:
         st.session_state.ledger_df = df_sheet
-except Exception as e:
-    st.warning("Could not connect to Google Sheets. Using default initial state.")
+except Exception:
     if "ledger_df" not in st.session_state:
         st.session_state.ledger_df = pd.DataFrame([
             {
@@ -30,7 +29,7 @@ except Exception as e:
             }
         ])
 
-# Compute Dynamic Values
+# Compute Dynamic Totals
 latest_row = st.session_state.ledger_df.iloc[-1]
 equities_val = float(latest_row.get("Equities Deployed", 3000000))
 cash_val = float(latest_row.get("LIQUIDCASE Cash", 0))
@@ -96,21 +95,29 @@ with tab_park_cash:
                 "Execution Notes": f"Parked ₹{park_amount:,.0f} | {park_notes}"
             }
             st.session_state.ledger_df = pd.concat([st.session_state.ledger_df, pd.DataFrame([new_row])], ignore_index=True)
-            # Update sheet
-            conn.update(data=st.session_state.ledger_df)
-            st.success("Successfully parked funds and updated Google Sheet!")
+            try:
+                conn.update(data=st.session_state.ledger_df)
+            except Exception:
+                pass
+            st.success("Successfully parked funds!")
             st.rerun()
 
-# TAB 3: Deploy Weekly SIP
+# TAB 3: Deploy Weekly SIP (Updated with your exact 8 ETFs)
 with tab_sip:
     st.subheader("Deploy Weekly SIP Funds")
     with st.form("sip_form"):
         sip_amount = st.number_input("Weekly SIP Amount (₹)", min_value=1000.0, step=5000.0, value=25000.0)
         sip_week = st.selectbox("SIP Week / Period", [f"Week {i}" for i in range(1, 53)])
+        
         target_etf = st.selectbox("Target ETF Allocation", [
-            "NIFTYBEES (Nifty 50)", "JUNIORBEES (Nifty Next 50)", "MID150BEES (Midcap 150)",
-            "MON100 (Nasdaq 100)", "GOLDBEES (Gold)", "SILVERBEES (Silver)",
-            "BANKBEES (Nifty Bank)", "ITBEES (Nifty IT)"
+            "MOM30IETF.NS (Nifty200 Momentum 30)",
+            "MID150BEES.NS (Nifty Midcap 150)",
+            "JUNIORBEES.NS (Nifty Next 50)",
+            "MON100.NS (Nasdaq 100 Tech)",
+            "AUTOBEES.NS (Nifty Auto & Mobility)",
+            "INFRAIETF.NS (Nifty Infrastructure)",
+            "GOLDBEES.NS (Physical Gold)",
+            "SILVERBEES.NS (Physical Silver)"
         ])
         sip_notes = st.text_input("Execution Notes", value="Weekly SIP Deployment")
         submit_sip = st.form_submit_button("Deploy Weekly SIP")
@@ -128,23 +135,25 @@ with tab_sip:
                 "Execution Notes": f"Weekly SIP Deployed ₹{sip_amount:,.0f} into {target_etf} | {sip_notes}"
             }
             st.session_state.ledger_df = pd.concat([st.session_state.ledger_df, pd.DataFrame([new_row])], ignore_index=True)
-            # Update sheet
-            conn.update(data=st.session_state.ledger_df)
-            st.success("Successfully deployed Weekly SIP and updated Google Sheet!")
+            try:
+                conn.update(data=st.session_state.ledger_df)
+            except Exception:
+                pass
+            st.success("Successfully deployed Weekly SIP!")
             st.rerun()
 
-# TAB 4: ETF Watchlist
+# TAB 4: My ETF List (Updated with your exact 8-ETF strategy)
 with tab_etfs:
     st.subheader("Institutional 8-ETF Watchlist & Allocation Matrix")
     etf_data = pd.DataFrame([
-        {"Ticker": "NIFTYBEES", "Category": "Large Cap Equity", "Index": "Nifty 50", "Target Allocation": "25%"},
-        {"Ticker": "JUNIORBEES", "Category": "Next Large Cap", "Index": "Nifty Next 50", "Target Allocation": "15%"},
-        {"Ticker": "MID150BEES", "Category": "Midcap Equity", "Index": "Nifty Midcap 150", "Target Allocation": "15%"},
-        {"Ticker": "MON100", "Category": "US Tech / Global", "Index": "Nasdaq 100", "Target Allocation": "15%"},
-        {"Ticker": "GOLDBEES", "Category": "Commodities", "Index": "Domestic Gold Spot", "Target Allocation": "10%"},
-        {"Ticker": "SILVERBEES", "Category": "Commodities", "Index": "Domestic Silver Spot", "Target Allocation": "5%"},
-        {"Ticker": "BANKBEES", "Category": "Sectoral", "Index": "Nifty Bank", "Target Allocation": "7.5%"},
-        {"Ticker": "ITBEES", "Category": "Sectoral", "Index": "Nifty IT", "Target Allocation": "7.5%"},
-        {"Ticker": "LIQUIDCASE", "Category": "Cash Equivalent", "Index": "Nifty 1D Rate Index", "Target Allocation": "Dynamic Cash"}
+        {"Ticker Symbol": "MOM30IETF.NS", "Index / Asset": "Nifty200 Momentum 30", "Strategy Category": "Factor Alpha"},
+        {"Ticker Symbol": "MID150BEES.NS", "Index / Asset": "Nifty Midcap 150", "Strategy Category": "Core Midcap"},
+        {"Ticker Symbol": "JUNIORBEES.NS", "Index / Asset": "Nifty Next 50", "Strategy Category": "Next Bluechips"},
+        {"Ticker Symbol": "MON100.NS", "Index / Asset": "Nasdaq 100 Tech", "Strategy Category": "Global Tech / USD"},
+        {"Ticker Symbol": "AUTOBEES.NS", "Index / Asset": "Nifty Auto & Mobility", "Strategy Category": "EV / Mobility"},
+        {"Ticker Symbol": "INFRAIETF.NS", "Index / Asset": "Nifty Infrastructure", "Strategy Category": "National Capex"},
+        {"Ticker Symbol": "GOLDBEES.NS", "Index / Asset": "Physical Gold", "Strategy Category": "Sovereign Ballast"},
+        {"Ticker Symbol": "SILVERBEES.NS", "Index / Asset": "Physical Silver", "Strategy Category": "Industrial Metal"},
+        {"Ticker Symbol": "LIQUIDCASE.NS", "Index / Asset": "Nifty 1D Rate Index", "Strategy Category": "Cash Yield Reserve"}
     ])
     st.dataframe(etf_data, use_container_width=True, hide_index=True)

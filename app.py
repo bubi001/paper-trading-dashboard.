@@ -55,10 +55,8 @@ st.title("8-ETF Institutional Paper Trading Terminal")
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total NAV", f"₹{TOTAL_NAV:,.0f}")
 col2.metric("Daily P&L", "₹0")
-col3.metric("Equities Deployed", f"₹{equities_deployed_val:,.0f}")
-col4.metric("LIQUIDCASE Cash", f"₹{liquidcase_cash_val:,.0f}")
-
-st.divider()
+col3.metric("Equities Deployed", f"₹{equities_deployed_val:,.2f}")
+col4.metric("LIQUIDCASE Cash", f"₹{liquidcase_cash_val:,.2f}")
 
 # ---------------------------------------------------------
 # 4. ETF PORTFOLIO & STRATEGY TABLE

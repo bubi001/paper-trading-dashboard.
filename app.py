@@ -82,36 +82,50 @@ etf_df = pd.DataFrame(etf_data)
 st.dataframe(etf_df, use_container_width=True)
 
 # ---------------------------------------------------------
-# 5. EXECUTION LEDGER ENTRY FORM
+# 5. EXECUTION LEDGER ENTRY FORM (DYNAMIC VALUES)
 # ---------------------------------------------------------
 st.divider()
 st.subheader("Log Trade Execution")
 
-with st.form("log_trade_form"):
-    col_a, col_b, col_c, col_d = st.columns(4)
-    trade_date = col_a.date_input("Date")
-    ticker = col_b.selectbox("Ticker", etf_df["Symbol"].tolist())
-    trade_type = col_c.selectbox("Type", ["BUY", "SELL"])
-    quantity = col_d.number_input("Quantity", min_value=1, step=1)
+# Convert etf_data to DataFrame for lookup
+etf_df = pd.DataFrame(etf_data)
 
-    price = st.number_input("Price (₹)", min_value=0.01, step=0.05)
+# Ticker Selection
+selected_ticker = st.selectbox("Select ETF Ticker", etf_df["Symbol"].tolist())
+
+# Fetch default LTP and Target Shares for selected ETF
+selected_row = etf_df[etf_df["Symbol"] == selected_ticker].iloc[0]
+default_ltp = float(selected_row["LTP"])
+default_shares = int(selected_row["Weekly Target Shares"])
+
+with st.form("log_trade_form"):
+    col_a, col_b, col_c = st.columns(3)
+    trade_date = col_a.date_input("Date")
+    trade_type = col_b.selectbox("Type", ["BUY", "SELL"])
+    quantity = col_c.number_input("Quantity (Shares)", min_value=1, value=default_shares, step=1)
+
+    price = st.number_input("Price per Share (₹)", min_value=0.01, value=default_ltp, step=0.05)
+    
+    # Calculate live order value
+    calculated_amount = quantity * price
+    st.info(f"**Total Trade Amount:** ₹{calculated_amount:,.2f}")
+
     submit_trade = st.form_submit_button("Save Trade to Ledger")
 
     if submit_trade:
-        amount = quantity * price
         new_entry = pd.DataFrame([{
             "Date": str(trade_date),
-            "Ticker": ticker,
+            "Ticker": selected_ticker,
             "Type": trade_type,
             "Quantity": quantity,
             "Price": price,
-            "Amount": amount
+            "Amount": calculated_amount
         }])
 
         updated_df = pd.concat([ledger_df, new_entry], ignore_index=True)
         try:
             conn.update(data=updated_df)
-            st.success("Trade successfully logged! Refreshing calculations...")
+            st.success(f"Successfully logged ₹{calculated_amount:,.2f} trade! Updating cash balance...")
             st.rerun()
         except Exception as err:
             st.error(f"Failed to save trade: {err}")

@@ -80,19 +80,20 @@ etf_df = pd.DataFrame(etf_data)
 st.dataframe(etf_df, use_container_width=True)
 
 # ---------------------------------------------------------
-# 5. EXECUTION LEDGER ENTRY FORM (DYNAMIC VALUES)
+# 5. EXECUTION LEDGER ENTRY FORM (ONLY ACTIVE BULL ETFS)
 # ---------------------------------------------------------
 st.divider()
 st.subheader("Log Trade Execution")
 
-# Convert etf_data to DataFrame for lookup
 etf_df = pd.DataFrame(etf_data)
 
-# Ticker Selection
-selected_ticker = st.selectbox("Select ETF Ticker", etf_df["Symbol"].tolist())
+# Filter out PARKED / BEAR ETFs so only active BUY recommendations appear
+active_etfs_df = etf_df[etf_df["Action Status"] == "BUY UNITS"]
 
-# Fetch default LTP and Target Shares for selected ETF
-selected_row = etf_df[etf_df["Symbol"] == selected_ticker].iloc[0]
+selected_ticker = st.selectbox("Select ETF Ticker", active_etfs_df["Symbol"].tolist())
+
+# Pull default LTP and Target Shares for selected active ETF
+selected_row = active_etfs_df[active_etfs_df["Symbol"] == selected_ticker].iloc[0]
 default_ltp = float(selected_row["LTP"])
 default_shares = int(selected_row["Weekly Target Shares"])
 
@@ -104,7 +105,6 @@ with st.form("log_trade_form"):
 
     price = st.number_input("Price per Share (₹)", min_value=0.01, value=default_ltp, step=0.05)
     
-    # Calculate live order value
     calculated_amount = quantity * price
     st.info(f"**Total Trade Amount:** ₹{calculated_amount:,.2f}")
 

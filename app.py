@@ -11,6 +11,9 @@ TICKERS = [
     "AUTOBEES.NS", "INFRAIETF.NS", "GOLDBEES.NS", "SILVERBEES.NS"
 ]
 
+# Expected column names for the ledger
+EXPECTED_COLUMNS = ["Date", "Ticker", "Type", "Quantity", "Buy_Price", "Total_Amount"]
+
 # -------------------------------------------------------------------
 # 1. GOOGLE SHEETS CONNECTION & LEDGER FETCH
 # -------------------------------------------------------------------
@@ -18,11 +21,12 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def get_ledger_data():
     try:
-        # Fetch ledger entries from Google Sheet
         df = conn.read(ttl=10)
+        if df is None or df.empty:
+            return pd.DataFrame(columns=EXPECTED_COLUMNS)
         return df
     except Exception:
-        return pd.DataFrame(columns=["Date", "Ticker", "Type", "Quantity", "Buy_Price", "Total_Amount"])
+        return pd.DataFrame(columns=EXPECTED_COLUMNS)
 
 ledger_df = get_ledger_data()
 
@@ -47,23 +51,38 @@ live_data = fetch_live_prices(TICKERS)
 
 INITIAL_CASH = 3000000.00  # ₹3,000,000 baseline NAV
 
-if not ledger_df.empty and "Quantity" in ledger_df.columns:
-    # Group executed buy trades
-    holdings = ledger_df.groupby("Ticker").agg({
-        "Quantity": "sum",
-        "Total_Amount": "sum"
-    }).reset_index()
+# Safely check if required columns exist in ledger_df
+required_cols = {"Ticker", "Quantity", "Total_Amount"}
 
-    holdings["Live_Price"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
-    holdings["Prev_Close"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
-    
-    holdings["Current_Value"] = holdings["Quantity"] * holdings["Live_Price"]
-    holdings["Daily_PnL"] = holdings["Quantity"] * (holdings["Live_Price"] - holdings["Prev_Close"])
+if not ledger_df.empty and required_cols.issubset(ledger_df.columns):
+    # Sanitize and convert numeric fields safely
+    ledger_df["Quantity"] = pd.to_numeric(ledger_df["Quantity"], errors="coerce").fillna(0)
+    ledger_df["Total_Amount"] = pd.to_numeric(ledger_df["Total_Amount"], errors="coerce").fillna(0)
 
-    equities_deployed = holdings["Current_Value"].sum()
-    daily_pnl = holdings["Daily_PnL"].sum()
-    total_cost = holdings["Total_Amount"].sum()
-    liquidcase_cash = INITIAL_CASH - total_cost
+    # Filter for BUY orders
+    buy_trades = ledger_df[ledger_df["Type"].astype(str).str.upper() == "BUY"] if "Type" in ledger_df.columns else ledger_df
+
+    if not buy_trades.empty:
+        # Group executed buy trades by ticker
+        holdings = buy_trades.groupby("Ticker").agg({
+            "Quantity": "sum",
+            "Total_Amount": "sum"
+        }).reset_index()
+
+        holdings["Live_Price"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
+        holdings["Prev_Close"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
+        
+        holdings["Current_Value"] = holdings["Quantity"] * holdings["Live_Price"]
+        holdings["Daily_PnL"] = holdings["Quantity"] * (holdings["Live_Price"] - holdings["Prev_Close"])
+
+        equities_deployed = holdings["Current_Value"].sum()
+        daily_pnl = holdings["Daily_PnL"].sum()
+        total_cost = holdings["Total_Amount"].sum()
+        liquidcase_cash = INITIAL_CASH - total_cost
+    else:
+        equities_deployed = 0.0
+        daily_pnl = 0.0
+        liquidcase_cash = INITIAL_CASH
 else:
     equities_deployed = 0.0
     daily_pnl = 0.0
@@ -85,7 +104,22 @@ col4.metric("LIQUIDCASE Cash", f"₹{liquidcase_cash:,.2f}")
 st.markdown("---")
 
 # -------------------------------------------------------------------
-# 4. LOG TRADE & UPDATE GOOGLE SHEET LEDGER
+# 4. LIVE WATCHLIST DISPLAY
+# -------------------------------------------------------------------
+st.subheader("Live Portfolio Watchlist")
+
+watchlist_df = pd.DataFrame([
+    {
+        "Symbol": ticker,
+        "Live Market Price (₹)": live_data[ticker]["live_price"],
+        "Previous Close (₹)": live_data[ticker]["prev_close"],
+        "1-Day Change (₹)": round(live_data[ticker]["live_price"] - live_data[ticker]["prev_close"], 2)
+    } for ticker in TICKERS
+])
+st.dataframe(watchlist_df, use_container_width=True)
+
+# -------------------------------------------------------------------
+# 5. LOG TRADE & UPDATE GOOGLE SHEET LEDGER
 # -------------------------------------------------------------------
 st.subheader("Log Trade Execution")
 
@@ -115,13 +149,18 @@ with st.form("trade_form"):
             "Total_Amount": total_amount
         }])
         
-        updated_ledger = pd.concat([ledger_df, new_row], ignore_index=True)
+        # Merge new row into existing dataframe structure
+        if ledger_df.empty or not set(EXPECTED_COLUMNS).issubset(ledger_df.columns):
+            updated_ledger = new_row
+        else:
+            updated_ledger = pd.concat([ledger_df, new_row], ignore_index=True)
+
         conn.update(data=updated_ledger)
         st.success(f"Recorded {trade_type} trade for {selected_ticker} to Google Sheets!")
         st.rerun()
 
 # -------------------------------------------------------------------
-# 5. LEDGER DISPLAY
+# 6. LEDGER DISPLAY
 # -------------------------------------------------------------------
 st.subheader("Google Sheets Trade Ledger")
 st.dataframe(ledger_df, use_container_width=True)

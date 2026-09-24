@@ -11,11 +11,10 @@ TICKERS = [
     "AUTOBEES.NS", "INFRAIETF.NS", "GOLDBEES.NS", "SILVERBEES.NS"
 ]
 
-# Expected column names for the ledger
 EXPECTED_COLUMNS = ["Date", "Ticker", "Type", "Quantity", "Buy_Price", "Total_Amount"]
 
 # -------------------------------------------------------------------
-# 1. GOOGLE SHEETS CONNECTION & LEDGER FETCH
+# 1. FETCH & MAP GOOGLE SHEET LEDGER
 # -------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -24,7 +23,22 @@ def get_ledger_data():
         df = conn.read(ttl=10)
         if df is None or df.empty:
             return pd.DataFrame(columns=EXPECTED_COLUMNS)
-        return df
+        
+        # Standardize column headers to handle variations (e.g. Price vs Buy_Price)
+        column_mapping = {
+            "Price": "Buy_Price",
+            "Amount": "Total_Amount",
+            "Symbol": "Ticker",
+            "Action": "Type"
+        }
+        df = df.rename(columns=column_mapping)
+        
+        # Fill missing required columns if necessary
+        for col in EXPECTED_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+                
+        return df[EXPECTED_COLUMNS]
     except Exception:
         return pd.DataFrame(columns=EXPECTED_COLUMNS)
 
@@ -48,22 +62,19 @@ def fetch_live_prices(tickers):
     return prices
 
 live_data = fetch_live_prices(TICKERS)
-
 INITIAL_CASH = 3000000.00  # ₹3,000,000 baseline NAV
 
-# Safely check if required columns exist in ledger_df
-required_cols = {"Ticker", "Quantity", "Total_Amount"}
-
-if not ledger_df.empty and required_cols.issubset(ledger_df.columns):
-    # Sanitize and convert numeric fields safely
+if not ledger_df.empty:
+    # Ensure numeric conversion for sheet values
     ledger_df["Quantity"] = pd.to_numeric(ledger_df["Quantity"], errors="coerce").fillna(0)
+    ledger_df["Buy_Price"] = pd.to_numeric(ledger_df["Buy_Price"], errors="coerce").fillna(0)
     ledger_df["Total_Amount"] = pd.to_numeric(ledger_df["Total_Amount"], errors="coerce").fillna(0)
 
-    # Filter for BUY orders
-    buy_trades = ledger_df[ledger_df["Type"].astype(str).str.upper() == "BUY"] if "Type" in ledger_df.columns else ledger_df
+    # Filter BUY trades
+    buy_trades = ledger_df[ledger_df["Type"].astype(str).str.upper() == "BUY"]
 
     if not buy_trades.empty:
-        # Group executed buy trades by ticker
+        # Group executed trades by Ticker
         holdings = buy_trades.groupby("Ticker").agg({
             "Quantity": "sum",
             "Total_Amount": "sum"
@@ -80,13 +91,9 @@ if not ledger_df.empty and required_cols.issubset(ledger_df.columns):
         total_cost = holdings["Total_Amount"].sum()
         liquidcase_cash = INITIAL_CASH - total_cost
     else:
-        equities_deployed = 0.0
-        daily_pnl = 0.0
-        liquidcase_cash = INITIAL_CASH
+        equities_deployed, daily_pnl, liquidcase_cash = 0.0, 0.0, INITIAL_CASH
 else:
-    equities_deployed = 0.0
-    daily_pnl = 0.0
-    liquidcase_cash = INITIAL_CASH
+    equities_deployed, daily_pnl, liquidcase_cash = 0.0, 0.0, INITIAL_CASH
 
 total_nav = liquidcase_cash + equities_deployed
 
@@ -104,10 +111,9 @@ col4.metric("LIQUIDCASE Cash", f"₹{liquidcase_cash:,.2f}")
 st.markdown("---")
 
 # -------------------------------------------------------------------
-# 4. LIVE WATCHLIST DISPLAY
+# 4. LIVE WATCHLIST & LEDGER DISPLAY
 # -------------------------------------------------------------------
 st.subheader("Live Portfolio Watchlist")
-
 watchlist_df = pd.DataFrame([
     {
         "Symbol": ticker,
@@ -118,49 +124,5 @@ watchlist_df = pd.DataFrame([
 ])
 st.dataframe(watchlist_df, use_container_width=True)
 
-# -------------------------------------------------------------------
-# 5. LOG TRADE & UPDATE GOOGLE SHEET LEDGER
-# -------------------------------------------------------------------
-st.subheader("Log Trade Execution")
-
-with st.form("trade_form"):
-    col_a, col_b, col_c, col_d = st.columns(4)
-    selected_ticker = col_a.selectbox("Select ETF Ticker", TICKERS)
-    trade_date = col_b.date_input("Date")
-    trade_type = col_c.selectbox("Type", ["BUY", "SELL"])
-    
-    current_live = live_data.get(selected_ticker, {}).get("live_price", 0.0)
-    price_per_share = col_d.number_input("Price per Share (₹)", value=float(current_live), format="%.2f")
-    
-    quantity = st.number_input("Quantity (Shares)", min_value=1, value=100)
-    total_amount = quantity * price_per_share
-
-    st.write(f"**Total Trade Amount:** ₹{total_amount:,.2f}")
-    
-    submit_trade = st.form_submit_button("Save Trade to Ledger")
-    
-    if submit_trade:
-        new_row = pd.DataFrame([{
-            "Date": str(trade_date),
-            "Ticker": selected_ticker,
-            "Type": trade_type,
-            "Quantity": quantity,
-            "Buy_Price": price_per_share,
-            "Total_Amount": total_amount
-        }])
-        
-        # Merge new row into existing dataframe structure
-        if ledger_df.empty or not set(EXPECTED_COLUMNS).issubset(ledger_df.columns):
-            updated_ledger = new_row
-        else:
-            updated_ledger = pd.concat([ledger_df, new_row], ignore_index=True)
-
-        conn.update(data=updated_ledger)
-        st.success(f"Recorded {trade_type} trade for {selected_ticker} to Google Sheets!")
-        st.rerun()
-
-# -------------------------------------------------------------------
-# 6. LEDGER DISPLAY
-# -------------------------------------------------------------------
-st.subheader("Google Sheets Trade Ledger")
+st.subheader("Imported Google Sheets Trade Ledger")
 st.dataframe(ledger_df, use_container_width=True)

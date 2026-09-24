@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
- from streamlit_gsheets import GSheetsConnection
+from streamlit_gsheets import GSheetsConnection
 from streamlit_autorefresh import st_autorefresh
- st.set_page_config(page_title="8-ETF Institutional Paper Trading Terminal", layout="wide")
+st.set_page_config(page_title="8-ETF Institutional Paper Trading Terminal", layout="wide")
 
 # Auto-refresh page every 60 seconds (60,000 ms)
 st_autorefresh(interval=60000, key="price_feed_refresh")

@@ -5,3 +5,4 @@ pandas
 numpy
 yfinance
 st-gsheets-connection
+streamlit-autorefresh

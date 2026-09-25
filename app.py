@@ -46,7 +46,6 @@ def get_ledger_data():
         if df is None or df.empty:
             return pd.DataFrame(columns=EXPECTED_COLUMNS)
         
-        # Standardize column headers
         column_mapping = {
             "Price": "Buy_Price",
             "Amount": "Total_Amount",
@@ -55,7 +54,6 @@ def get_ledger_data():
         }
         df = df.rename(columns=column_mapping)
         
-        # Fill missing required columns
         for col in EXPECTED_COLUMNS:
             if col not in df.columns:
                 df[col] = None
@@ -67,7 +65,7 @@ def get_ledger_data():
 ledger_df = get_ledger_data()
 
 # -------------------------------------------------------------------
-# 2. LIVE MARKET PRICES & AUTO-PARKING CASH IN LIQUIDCASE
+# 2. LIVE MARKET PRICES & ETF HOLDINGS CALCULATION
 # -------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def fetch_live_prices(tickers):
@@ -84,7 +82,7 @@ def fetch_live_prices(tickers):
     return prices
 
 live_data = fetch_live_prices(TICKERS)
-TOTAL_CAPITAL = 3000000.00  # Total portfolio capital pool (₹30,00,000)
+TOTAL_CAPITAL = 3000000.00  # ₹30,00,000 baseline cash pool
 
 if not ledger_df.empty:
     ledger_df["Quantity"] = pd.to_numeric(ledger_df["Quantity"], errors="coerce").fillna(0)
@@ -111,55 +109,46 @@ if not ledger_df.empty:
 else:
     holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
 
-# Calculate total deployed equity cost (excluding LIQUIDCASE trades)
+# Deployed capital in equity ETFs (excluding LIQUIDCASE)
 other_equity_trades = holdings[holdings["Ticker"] != "LIQUIDCASE.NS"]
 equity_cost = other_equity_trades["Total_Amount"].sum() if not other_equity_trades.empty else 0.0
 
-# Get live prices for LIQUIDCASE
 lc_live_price = live_data.get("LIQUIDCASE.NS", {}).get("live_price", 100.0)
-lc_prev_close = live_data.get("LIQUIDCASE.NS", {}).get("prev_close", 100.0)
 
-# Auto-park all uninvested cash into LIQUIDCASE.NS
+# Uninvested cash balance to park
 parked_cash = max(0.0, TOTAL_CAPITAL - equity_cost)
-
-explicit_lc = holdings[holdings["Ticker"] == "LIQUIDCASE.NS"]
-explicit_lc_units = explicit_lc["Quantity"].sum() if not explicit_lc.empty else 0
-
 parked_lc_units = parked_cash / lc_live_price if lc_live_price > 0 else 0
-total_liquidcase_units = explicit_lc_units + parked_lc_units
-liquidcase_value = total_liquidcase_units * lc_live_price
 
-# Update or insert LIQUIDCASE row into holdings DataFrame
-if "LIQUIDCASE.NS" in holdings["Ticker"].values:
-    holdings.loc[holdings["Ticker"] == "LIQUIDCASE.NS", "Quantity"] = total_liquidcase_units
-    holdings.loc[holdings["Ticker"] == "LIQUIDCASE.NS", "Total_Amount"] = parked_cash
-else:
-    new_lc_row = pd.DataFrame([{
-        "Ticker": "LIQUIDCASE.NS",
-        "Quantity": total_liquidcase_units,
-        "Total_Amount": parked_cash
-    }])
-    holdings = pd.concat([holdings, new_lc_row], ignore_index=True)
+# Replace or assign LIQUIDCASE holding based on uninvested cash
+holdings = holdings[holdings["Ticker"] != "LIQUIDCASE.NS"].copy()
+new_lc_row = pd.DataFrame([{
+    "Ticker": "LIQUIDCASE.NS",
+    "Quantity": parked_lc_units,
+    "Total_Amount": parked_cash
+}])
+holdings = pd.concat([holdings, new_lc_row], ignore_index=True)
 
-# Map live market prices & calculate final portfolio metrics
+# Calculate live holdings metrics
 holdings["Live_Price"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
 holdings["Prev_Close"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
 holdings["Current_Value"] = holdings["Quantity"] * holdings["Live_Price"]
 holdings["Daily_PnL"] = holdings["Quantity"] * (holdings["Live_Price"] - holdings["Prev_Close"])
+holdings["Total_PnL"] = holdings["Current_Value"] - holdings["Total_Amount"]
 
 total_portfolio_value = holdings["Current_Value"].sum()
 daily_pnl = holdings["Daily_PnL"].sum()
-total_cost = holdings["Total_Amount"].sum()
+total_pl = holdings["Total_PnL"].sum()
 
-total_nav = total_portfolio_value
-total_pl = total_portfolio_value - TOTAL_CAPITAL
+lc_row = holdings[holdings["Ticker"] == "LIQUIDCASE.NS"]
+liquidcase_value = lc_row["Current_Value"].sum() if not lc_row.empty else 0.0
+total_liquidcase_units = lc_row["Quantity"].sum() if not lc_row.empty else 0
 
 # -------------------------------------------------------------------
 # 3. METRICS DISPLAY
 # -------------------------------------------------------------------
 st.title("8-ETF Institutional Paper Trading Terminal")
 col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Total NAV", f"₹{total_nav:,.2f}")
+col1.metric("Total NAV", f"₹{total_portfolio_value:,.2f}")
 col2.metric("Daily P&L", f"₹{daily_pnl:,.2f}", delta=f"{daily_pnl:,.2f}")
 col3.metric("Total P&L", f"₹{total_pl:,.2f}", delta=f"{total_pl:,.2f}")
 col4.metric("Equities Deployed", f"₹{equity_cost:,.2f}")
@@ -177,8 +166,8 @@ with tab1:
     
     if not holdings.empty:
         st.markdown("#### Current ETF Positions")
-        holdings_display = holdings[["Ticker", "Quantity", "Total_Amount", "Live_Price", "Current_Value", "Daily_PnL"]].copy()
-        holdings_display.columns = ["Ticker", "Units", "Cost Value (₹)", "Live Price (₹)", "Current Value (₹)", "1-Day P&L (₹)"]
+        holdings_display = holdings[["Ticker", "Quantity", "Total_Amount", "Live_Price", "Current_Value", "Daily_PnL", "Total_PnL"]].copy()
+        holdings_display.columns = ["Ticker", "Units", "Cost Value (₹)", "Live Price (₹)", "Current Value (₹)", "1-Day P&L (₹)", "Total P&L (₹)"]
         st.dataframe(holdings_display, use_container_width=True)
     
     st.markdown("#### Market Watchlist")

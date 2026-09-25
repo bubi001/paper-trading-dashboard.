@@ -1,4 +1,4 @@
-import pandas as pd
+ import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from streamlit_gsheets import GSheetsConnection
@@ -109,39 +109,47 @@ if not ledger_df.empty:
 else:
     holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
 
-# Deployed capital in equity ETFs (excluding LIQUIDCASE)
-other_equity_trades = holdings[holdings["Ticker"] != "LIQUIDCASE.NS"]
-equity_cost = other_equity_trades["Total_Amount"].sum() if not other_equity_trades.empty else 0.0
+# Separate active equity trades from LIQUIDCASE
+equity_holdings = holdings[holdings["Ticker"] != "LIQUIDCASE.NS"].copy()
+equity_cost = equity_holdings["Total_Amount"].sum() if not equity_holdings.empty else 0.0
 
 lc_live_price = live_data.get("LIQUIDCASE.NS", {}).get("live_price", 100.0)
 
-# Uninvested cash balance to park
+# Park all uninvested cash into LIQUIDCASE.NS
 parked_cash = max(0.0, TOTAL_CAPITAL - equity_cost)
 parked_lc_units = parked_cash / lc_live_price if lc_live_price > 0 else 0
 
-# Replace or assign LIQUIDCASE holding based on uninvested cash
-holdings = holdings[holdings["Ticker"] != "LIQUIDCASE.NS"].copy()
-new_lc_row = pd.DataFrame([{
+# Calculate equity metrics
+if not equity_holdings.empty:
+    equity_holdings["Live_Price"] = equity_holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
+    equity_holdings["Prev_Close"] = equity_holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
+    equity_holdings["Current_Value"] = equity_holdings["Quantity"] * equity_holdings["Live_Price"]
+    equity_holdings["Daily_PnL"] = equity_holdings["Quantity"] * (equity_holdings["Live_Price"] - equity_holdings["Prev_Close"])
+    equity_holdings["Total_PnL"] = equity_holdings["Current_Value"] - equity_holdings["Total_Amount"]
+else:
+    equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount", "Live_Price", "Prev_Close", "Current_Value", "Daily_PnL", "Total_PnL"])
+
+# Create LIQUIDCASE row with zero Total PnL to prevent cash pool distortion
+lc_row = pd.DataFrame([{
     "Ticker": "LIQUIDCASE.NS",
     "Quantity": parked_lc_units,
-    "Total_Amount": parked_cash
+    "Total_Amount": parked_cash,
+    "Live_Price": lc_live_price,
+    "Prev_Close": live_data.get("LIQUIDCASE.NS", {}).get("prev_close", lc_live_price),
+    "Current_Value": parked_cash,
+    "Daily_PnL": 0.0,
+    "Total_PnL": 0.0
 }])
-holdings = pd.concat([holdings, new_lc_row], ignore_index=True)
 
-# Calculate live holdings metrics
-holdings["Live_Price"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
-holdings["Prev_Close"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
-holdings["Current_Value"] = holdings["Quantity"] * holdings["Live_Price"]
-holdings["Daily_PnL"] = holdings["Quantity"] * (holdings["Live_Price"] - holdings["Prev_Close"])
-holdings["Total_PnL"] = holdings["Current_Value"] - holdings["Total_Amount"]
+holdings = pd.concat([equity_holdings, lc_row], ignore_index=True)
 
-total_portfolio_value = holdings["Current_Value"].sum()
-daily_pnl = holdings["Daily_PnL"].sum()
-total_pl = holdings["Total_PnL"].sum()
+# Final aggregate metrics
+total_portfolio_value = equity_holdings["Current_Value"].sum() + parked_cash
+daily_pnl = equity_holdings["Daily_PnL"].sum()
+total_pl = equity_holdings["Total_PnL"].sum()
 
-lc_row = holdings[holdings["Ticker"] == "LIQUIDCASE.NS"]
-liquidcase_value = lc_row["Current_Value"].sum() if not lc_row.empty else 0.0
-total_liquidcase_units = lc_row["Quantity"].sum() if not lc_row.empty else 0
+liquidcase_value = parked_cash
+total_liquidcase_units = parked_lc_units
 
 # -------------------------------------------------------------------
 # 3. METRICS DISPLAY

@@ -93,13 +93,15 @@ if not ledger_df.empty:
     ledger_df["Buy_Price"] = pd.to_numeric(ledger_df["Buy_Price"], errors="coerce").fillna(0)
     ledger_df["Total_Amount"] = pd.to_numeric(ledger_df["Total_Amount"], errors="coerce").fillna(0)
     
-    # Calculate initial LIQUIDCASE capital pool directly from the sheet's BUY rows for LIQUIDCASE
-    lc_ledger_buys = ledger_df[(ledger_df["Ticker"].astype(str).str.upper() == "LIQUIDCASE.NS") & (ledger_df["Type"].astype(str).str.upper() == "BUY")]
+    # 1. Dynamically identify initial LIQUIDCASE pool from sheet
+    is_lc = ledger_df["Ticker"].astype(str).str.strip().str.upper().str.contains("LIQUIDCASE")
+    is_buy = ledger_df["Type"].astype(str).str.strip().str.upper() == "BUY"
+    lc_ledger_buys = ledger_df[is_lc & is_buy]
+
     INITIAL_CAPITAL = lc_ledger_buys["Total_Amount"].sum() if not lc_ledger_buys.empty else 3000000.00
 
-    # Separate non-LIQUIDCASE equity trades
-    non_lc_ledger = ledger_df[ledger_df["Ticker"].astype(str).str.upper() != "LIQUIDCASE.NS"]
-    
+    # 2. Process non-LIQUIDCASE active equity trades
+    non_lc_ledger = ledger_df[~is_lc]
     buy_trades = non_lc_ledger[non_lc_ledger["Type"].astype(str).str.upper() == "BUY"]
     sell_trades = non_lc_ledger[non_lc_ledger["Type"].astype(str).str.upper() == "SELL"]
     
@@ -121,10 +123,10 @@ else:
     INITIAL_CAPITAL = 3000000.00
     equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
 
-# Equity cost deployed from the capital pool
+# Cost deployed in equities
 equity_cost = equity_holdings["Total_Amount"].sum() if not equity_holdings.empty else 0.0
 
-# Calculate remaining LIQUIDCASE position dynamically from INITIAL_CAPITAL
+# Calculate remaining LIQUIDCASE position
 lc_live_price = live_data.get("LIQUIDCASE.NS", {}).get("live_price", 116.10)
 lc_prev_close = live_data.get("LIQUIDCASE.NS", {}).get("prev_close", 116.06)
 
@@ -156,9 +158,10 @@ lc_row = pd.DataFrame([{
 
 holdings = pd.concat([equity_holdings, lc_row], ignore_index=True)
 
+# Correct NAV and Total P&L against initial capital base
 total_portfolio_value = holdings["Current_Value"].sum()
 daily_pnl = holdings["Daily_PnL"].sum()
-total_pl = equity_holdings["Total_PnL"].sum() if not equity_holdings.empty else 0.0
+total_pl = total_portfolio_value - INITIAL_CAPITAL
 
 st.title("8-ETF Institutional Paper Trading Terminal")
 col1, col2, col3, col4, col5 = st.columns(5)

@@ -1,4 +1,4 @@
- import pandas as pd
+import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from streamlit_gsheets import GSheetsConnection

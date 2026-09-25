@@ -98,13 +98,20 @@ else:
     equities_deployed, daily_pnl, liquidcase_cash = 0.0, 0.0, INITIAL_CASH
 
 total_nav = liquidcase_cash + equities_deployed
-
+# Calculate Total P&L
+total_pl = total_current_value - equities_deployed
 # -------------------------------------------------------------------
 # 3. METRICS DISPLAY
 # -------------------------------------------------------------------
 st.title("8-ETF Institutional Paper Trading Terminal")
-
-col1, col2, col3, col4 = st.columns(4)
+ 
+col1, col2, col3, col4, col5 = st.columns(5)
+with col3:
+    st.metric(
+        label="Total P&L",
+        value=f"₹{total_pl:,.2f}",
+        delta=f"₹{total_pl:,.2f}"
+    )
 col1.metric("Total NAV", f"₹{total_nav:,.2f}")
 col2.metric("Daily P&L", f"₹{daily_pnl:,.2f}", delta=f"₹{daily_pnl:,.2f}")
 col3.metric("Equities Deployed", f"₹{equities_deployed:,.2f}")

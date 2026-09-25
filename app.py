@@ -93,75 +93,49 @@ if not ledger_df.empty:
     ledger_df["Buy_Price"] = pd.to_numeric(ledger_df["Buy_Price"], errors="coerce").fillna(0)
     ledger_df["Total_Amount"] = pd.to_numeric(ledger_df["Total_Amount"], errors="coerce").fillna(0)
     
-    # 1. Dynamically identify initial LIQUIDCASE pool from sheet
-    is_lc = ledger_df["Ticker"].astype(str).str.strip().str.upper().str.contains("LIQUIDCASE")
-    is_buy = ledger_df["Type"].astype(str).str.strip().str.upper() == "BUY"
-    lc_ledger_buys = ledger_df[is_lc & is_buy]
-
-    INITIAL_CAPITAL = lc_ledger_buys["Total_Amount"].sum() if not lc_ledger_buys.empty else 3000000.00
-
-    # 2. Process non-LIQUIDCASE active equity trades
-    non_lc_ledger = ledger_df[~is_lc]
-    buy_trades = non_lc_ledger[non_lc_ledger["Type"].astype(str).str.upper() == "BUY"]
-    sell_trades = non_lc_ledger[non_lc_ledger["Type"].astype(str).str.upper() == "SELL"]
+    # Process ALL trades directly from sheet (including LIQUIDCASE)
+    buy_trades = ledger_df[ledger_df["Type"].astype(str).str.upper() == "BUY"]
+    sell_trades = ledger_df[ledger_df["Type"].astype(str).str.upper() == "SELL"]
     
     if not buy_trades.empty:
         buy_grouped = buy_trades.groupby("Ticker").agg({"Quantity": "sum", "Total_Amount": "sum"}).reset_index()
         
         if not sell_trades.empty:
             sell_grouped = sell_trades.groupby("Ticker").agg({"Quantity": "sum", "Total_Amount": "sum"}).reset_index()
-            equity_holdings = pd.merge(buy_grouped, sell_grouped, on="Ticker", how="left", suffixes=("_buy", "_sell")).fillna(0)
-            equity_holdings["Quantity"] = equity_holdings["Quantity_buy"] - equity_holdings["Quantity_sell"]
-            equity_holdings["Total_Amount"] = equity_holdings["Total_Amount_buy"] - equity_holdings["Total_Amount_sell"]
+            holdings = pd.merge(buy_grouped, sell_grouped, on="Ticker", how="left", suffixes=("_buy", "_sell")).fillna(0)
+            holdings["Quantity"] = holdings["Quantity_buy"] - holdings["Quantity_sell"]
+            holdings["Total_Amount"] = holdings["Total_Amount_buy"] - holdings["Total_Amount_sell"]
         else:
-            equity_holdings = buy_grouped
+            holdings = buy_grouped
 
-        equity_holdings = equity_holdings[equity_holdings["Quantity"] > 0].copy()
+        holdings = holdings[holdings["Quantity"] > 0].copy()
     else:
-        equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
+        holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
 else:
-    INITIAL_CAPITAL = 3000000.00
-    equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
+    holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
 
-# Cost deployed in equities
+# Compute live prices & P&L for all positions
+if not holdings.empty:
+    holdings["Live_Price"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
+    holdings["Prev_Close"] = holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
+    holdings["Current_Value"] = holdings["Quantity"] * holdings["Live_Price"]
+    holdings["Daily_PnL"] = holdings["Quantity"] * (holdings["Live_Price"] - holdings["Prev_Close"])
+    holdings["Total_PnL"] = holdings["Current_Value"] - holdings["Total_Amount"]
+else:
+    holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount", "Live_Price", "Prev_Close", "Current_Value", "Daily_PnL", "Total_PnL"])
+
+# Separate Equity vs LIQUIDCASE metrics
+is_lc_row = holdings["Ticker"].astype(str).str.upper().str.contains("LIQUIDCASE")
+equity_holdings = holdings[~is_lc_row]
+lc_row = holdings[is_lc_row]
+
 equity_cost = equity_holdings["Total_Amount"].sum() if not equity_holdings.empty else 0.0
+lc_current_value = lc_row["Current_Value"].sum() if not lc_row.empty else 0.0
+lc_units = lc_row["Quantity"].sum() if not lc_row.empty else 0.0
 
-# Calculate remaining LIQUIDCASE position
-lc_live_price = live_data.get("LIQUIDCASE.NS", {}).get("live_price", 116.10)
-lc_prev_close = live_data.get("LIQUIDCASE.NS", {}).get("prev_close", 116.06)
-
-lc_allocated_cash = max(0.0, INITIAL_CAPITAL - equity_cost)
-lc_units = lc_allocated_cash / lc_live_price if lc_live_price > 0 else 0.0
-
-if not equity_holdings.empty:
-    equity_holdings["Live_Price"] = equity_holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
-    equity_holdings["Prev_Close"] = equity_holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
-    equity_holdings["Current_Value"] = equity_holdings["Quantity"] * equity_holdings["Live_Price"]
-    equity_holdings["Daily_PnL"] = equity_holdings["Quantity"] * (equity_holdings["Live_Price"] - equity_holdings["Prev_Close"])
-    equity_holdings["Total_PnL"] = equity_holdings["Current_Value"] - equity_holdings["Total_Amount"]
-else:
-    equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount", "Live_Price", "Prev_Close", "Current_Value", "Daily_PnL", "Total_PnL"])
-
-lc_current_value = lc_units * lc_live_price
-lc_daily_pnl = lc_units * (lc_live_price - lc_prev_close)
-
-lc_row = pd.DataFrame([{
-    "Ticker": "LIQUIDCASE.NS",
-    "Quantity": lc_units,
-    "Total_Amount": lc_allocated_cash,
-    "Live_Price": lc_live_price,
-    "Prev_Close": lc_prev_close,
-    "Current_Value": lc_current_value,
-    "Daily_PnL": lc_daily_pnl,
-    "Total_PnL": 0.0
-}])
-
-holdings = pd.concat([equity_holdings, lc_row], ignore_index=True)
-
-# Correct NAV and Total P&L against initial capital base
-total_portfolio_value = holdings["Current_Value"].sum()
-daily_pnl = holdings["Daily_PnL"].sum()
-total_pl = total_portfolio_value - INITIAL_CAPITAL
+total_portfolio_value = holdings["Current_Value"].sum() if not holdings.empty else 0.0
+daily_pnl = holdings["Daily_PnL"].sum() if not holdings.empty else 0.0
+total_pl = holdings["Total_PnL"].sum() if not holdings.empty else 0.0
 
 st.title("8-ETF Institutional Paper Trading Terminal")
 col1, col2, col3, col4, col5 = st.columns(5)

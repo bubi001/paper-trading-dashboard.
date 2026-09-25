@@ -109,15 +109,25 @@ if not ledger_df.empty:
 else:
     holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
 
-# Separate active equity trades from LIQUIDCASE
+# Separate active equity holdings from LIQUIDCASE
 equity_holdings = holdings[holdings["Ticker"] != "LIQUIDCASE.NS"].copy()
 equity_cost = equity_holdings["Total_Amount"].sum() if not equity_holdings.empty else 0.0
 
-lc_live_price = live_data.get("LIQUIDCASE.NS", {}).get("live_price", 100.0)
+# Extract explicit LIQUIDCASE trades from ledger
+lc_trade_row = holdings[holdings["Ticker"] == "LIQUIDCASE.NS"]
+explicit_lc_units = lc_trade_row["Quantity"].sum() if not lc_trade_row.empty else 0
+explicit_lc_cost = lc_trade_row["Total_Amount"].sum() if not lc_trade_row.empty else 0.0
 
-# Park all uninvested cash into LIQUIDCASE.NS
-parked_cash = max(0.0, TOTAL_CAPITAL - equity_cost)
-parked_lc_units = parked_cash / lc_live_price if lc_live_price > 0 else 0
+lc_live_price = live_data.get("LIQUIDCASE.NS", {}).get("live_price", 100.0)
+lc_prev_close = live_data.get("LIQUIDCASE.NS", {}).get("prev_close", 100.0)
+
+# Calculate uninvested cash to auto-park
+uninvested_cash = max(0.0, TOTAL_CAPITAL - equity_cost - explicit_lc_cost)
+auto_parked_lc_units = uninvested_cash / lc_live_price if lc_live_price > 0 else 0
+
+# Total LIQUIDCASE units (Ledger Trades + Auto-Parked Cash)
+total_liquidcase_units = explicit_lc_units + auto_parked_lc_units
+total_liquidcase_cost = explicit_lc_cost + uninvested_cash
 
 # Calculate equity metrics
 if not equity_holdings.empty:
@@ -129,27 +139,29 @@ if not equity_holdings.empty:
 else:
     equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount", "Live_Price", "Prev_Close", "Current_Value", "Daily_PnL", "Total_PnL"])
 
-# Create LIQUIDCASE row with zero Total PnL to prevent cash pool distortion
+# Create LIQUIDCASE row with active Daily PnL
+lc_current_value = total_liquidcase_units * lc_live_price
+lc_daily_pnl = total_liquidcase_units * (lc_live_price - lc_prev_close)
+
 lc_row = pd.DataFrame([{
     "Ticker": "LIQUIDCASE.NS",
-    "Quantity": parked_lc_units,
-    "Total_Amount": parked_cash,
+    "Quantity": total_liquidcase_units,
+    "Total_Amount": total_liquidcase_cost,
     "Live_Price": lc_live_price,
-    "Prev_Close": live_data.get("LIQUIDCASE.NS", {}).get("prev_close", lc_live_price),
-    "Current_Value": parked_cash,
-    "Daily_PnL": 0.0,
-    "Total_PnL": 0.0
+    "Prev_Close": lc_prev_close,
+    "Current_Value": lc_current_value,
+    "Daily_PnL": lc_daily_pnl,
+    "Total_PnL": lc_current_value - total_liquidcase_cost
 }])
 
 holdings = pd.concat([equity_holdings, lc_row], ignore_index=True)
 
 # Final aggregate metrics
-total_portfolio_value = equity_holdings["Current_Value"].sum() + parked_cash
-daily_pnl = equity_holdings["Daily_PnL"].sum()
-total_pl = equity_holdings["Total_PnL"].sum()
+total_portfolio_value = holdings["Current_Value"].sum()
+daily_pnl = holdings["Daily_PnL"].sum()
+total_pl = holdings["Total_PnL"].sum()
 
-liquidcase_value = parked_cash
-total_liquidcase_units = parked_lc_units
+liquidcase_value = lc_current_value
 
 # -------------------------------------------------------------------
 # 3. METRICS DISPLAY

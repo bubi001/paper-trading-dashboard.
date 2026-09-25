@@ -36,36 +36,49 @@ EXPECTED_COLUMNS = [
 ]
 
 # -------------------------------------------------------------------
-# 1. FETCH & MAP GOOGLE SHEET LEDGER
+# 1. FETCH & FLEXIBLY MAP GOOGLE SHEET LEDGER
 # -------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def get_ledger_data():
     try:
-        df = conn.read(ttl=10)
+        df = conn.read(ttl=5)
         if df is None or df.empty:
             return pd.DataFrame(columns=EXPECTED_COLUMNS)
         
-        column_mapping = {
-            "Price": "Buy_Price",
-            "Amount": "Total_Amount",
-            "Symbol": "Ticker",
-            "Action": "Type",
-        }
-        df = df.rename(columns=column_mapping)
+        # Standardize column header names (case-insensitive)
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        rename_map = {}
+        for col in df.columns:
+            c_upper = col.upper()
+            if c_upper in ["PRICE", "BUY_PRICE", "BUY PRICE"]:
+                rename_map[col] = "Buy_Price"
+            elif c_upper in ["AMOUNT", "TOTAL_AMOUNT", "TOTAL AMOUNT"]:
+                rename_map[col] = "Total_Amount"
+            elif c_upper in ["SYMBOL", "TICKER"]:
+                rename_map[col] = "Ticker"
+            elif c_upper in ["ACTION", "TYPE", "TRADE_TYPE"]:
+                rename_map[col] = "Type"
+            elif c_upper in ["DATE"]:
+                rename_map[col] = "Date"
+            elif c_upper in ["QUANTITY", "QTY"]:
+                rename_map[col] = "Quantity"
+
+        df = df.rename(columns=rename_map)
         
         for col in EXPECTED_COLUMNS:
             if col not in df.columns:
                 df[col] = None
                 
-        return df[EXPECTED_COLUMNS].dropna(how="all")
+        return df[EXPECTED_COLUMNS].dropna(subset=["Ticker", "Type"])
     except Exception:
         return pd.DataFrame(columns=EXPECTED_COLUMNS)
 
 ledger_df = get_ledger_data()
 
 # -------------------------------------------------------------------
-# 2. LIVE MARKET PRICES & DYNAMIC CASH SWEEP
+# 2. LIVE MARKET PRICES & ETF HOLDINGS
 # -------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def fetch_live_prices(tickers):
@@ -82,18 +95,18 @@ def fetch_live_prices(tickers):
     return prices
 
 live_data = fetch_live_prices(TICKERS)
-INITIAL_CAPITAL = 3000000.00  # Initial ₹30,00,000 starting cash pool
+INITIAL_CAPITAL = 3000000.00  # ₹30,00,000 starting cash pool
 
 if not ledger_df.empty:
     ledger_df["Quantity"] = pd.to_numeric(ledger_df["Quantity"], errors="coerce").fillna(0)
     ledger_df["Buy_Price"] = pd.to_numeric(ledger_df["Buy_Price"], errors="coerce").fillna(0)
     ledger_df["Total_Amount"] = pd.to_numeric(ledger_df["Total_Amount"], errors="coerce").fillna(0)
     
-    # Process active equity ETF trades (excluding LIQUIDCASE)
-    non_lc_ledger = ledger_df[ledger_df["Ticker"].astype(str).str.upper() != "LIQUIDCASE.NS"]
+    # Process equity trades (excluding LIQUIDCASE)
+    equity_ledger = ledger_df[ledger_df["Ticker"].astype(str).str.upper() != "LIQUIDCASE.NS"]
     
-    buy_trades = non_lc_ledger[non_lc_ledger["Type"].astype(str).str.upper() == "BUY"]
-    sell_trades = non_lc_ledger[non_lc_ledger["Type"].astype(str).str.upper() == "SELL"]
+    buy_trades = equity_ledger[equity_ledger["Type"].astype(str).str.upper() == "BUY"]
+    sell_trades = equity_ledger[equity_ledger["Type"].astype(str).str.upper() == "SELL"]
     
     if not buy_trades.empty:
         buy_grouped = buy_trades.groupby("Ticker").agg({"Quantity": "sum", "Total_Amount": "sum"}).reset_index()
@@ -112,17 +125,16 @@ if not ledger_df.empty:
 else:
     equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount"])
 
-# Calculate total net cost deployed into non-LIQUIDCASE equity ETFs
+# Deployed equity cost
 equity_cost = equity_holdings["Total_Amount"].sum() if not equity_holdings.empty else 0.0
 
-# Calculate remaining cash automatically parked in LIQUIDCASE
+# Calculate LIQUIDCASE auto-parked cash
 lc_live_price = live_data.get("LIQUIDCASE.NS", {}).get("live_price", 100.0)
 lc_prev_close = live_data.get("LIQUIDCASE.NS", {}).get("prev_close", 100.0)
 
 lc_allocated_cash = max(0.0, INITIAL_CAPITAL - equity_cost)
 lc_units = lc_allocated_cash / lc_live_price if lc_live_price > 0 else 0.0
 
-# Calculate equity metrics
 if not equity_holdings.empty:
     equity_holdings["Live_Price"] = equity_holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("live_price", 0.0))
     equity_holdings["Prev_Close"] = equity_holdings["Ticker"].map(lambda x: live_data.get(x, {}).get("prev_close", 0.0))
@@ -132,7 +144,7 @@ if not equity_holdings.empty:
 else:
     equity_holdings = pd.DataFrame(columns=["Ticker", "Quantity", "Total_Amount", "Live_Price", "Prev_Close", "Current_Value", "Daily_PnL", "Total_PnL"])
 
-# Build LIQUIDCASE row with daily yield included
+# Build LIQUIDCASE row
 lc_current_value = lc_units * lc_live_price
 lc_daily_pnl = lc_units * (lc_live_price - lc_prev_close)
 
@@ -149,7 +161,7 @@ lc_row = pd.DataFrame([{
 
 holdings = pd.concat([equity_holdings, lc_row], ignore_index=True)
 
-# Final aggregate metrics
+# Aggregates
 total_portfolio_value = holdings["Current_Value"].sum()
 daily_pnl = holdings["Daily_PnL"].sum()
 total_pl = equity_holdings["Total_PnL"].sum() if not equity_holdings.empty else 0.0

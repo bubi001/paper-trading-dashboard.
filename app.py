@@ -13,6 +13,7 @@ st_autorefresh(interval=60000, key="price_feed_refresh")
 
 # Target ETFs
 TICKERS = [
+    "LIQUIDCASE.NS",
     "MOM30IETF.NS",
     "MID150BEES.NS",
     "JUNIORBEES.NS",

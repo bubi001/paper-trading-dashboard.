@@ -1,4 +1,5 @@
 name: Keep Streamlit Alive
+
 on:
   schedule:
     - cron: '*/15 * * * *' # Triggers every 15 minutes
@@ -9,4 +10,4 @@ jobs:
     steps:
       - name: Ping Streamlit App
         run: |
-          curl -sL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://paper-trading-dashboard-luqrtkrqla7vnpnw2evxzh.streamlit.app/" > /dev/null
+          curl -I -sS -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://paper-trading-dashboard-luqrtkrqla7vnpnw2evxzh.streamlit.app/" || true
